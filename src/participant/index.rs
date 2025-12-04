@@ -3,8 +3,8 @@ use digest::consts::U8;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bls_multi_signature::{BlsSignature, BlsVerificationKey},
-    error::{AsmSignatureError, IndexError},
+    bls_multi_signature::{BlsSignature, BlsVerificationKey, helper::unsafe_helpers::fr_one},
+    error::IndexError,
 };
 
 /// Signer index
@@ -69,17 +69,9 @@ impl Index {
     /// Hash an index to a G1 element
     /// Compute it as the signature H1(b"index" || index)^sk with sk=1
     pub fn hash_to_g1(&self) -> crate::bls_multi_signature::BlsSignature {
-        let blst_one = {
-            let mut one = [0u8; 32];
-            one[31] = 1;
-            crate::bls_multi_signature::BlsSigningKey::from_bytes(&one)
-                .map_err(|_| AsmSignatureError::GenericAsmSignatureError)
-                .unwrap()
-        };
+        let blst_one = fr_one();
 
-        let sig = blst_one
-            .to_blst_secret_key()
-            .sign(&self.augmented_index(), &[], &[]);
+        let sig = blst_one.sign(&self.augmented_index(), &[], &[]);
 
         BlsSignature(sig)
     }

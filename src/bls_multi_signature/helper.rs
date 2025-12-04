@@ -1,10 +1,10 @@
 pub(crate) mod unsafe_helpers {
     use blst::{
-        blst_fp12, blst_fp12_finalverify, blst_fp12_mul, blst_p1, blst_p1_add, blst_p1_affine,
-        blst_p1_affine_generator, blst_p1_compress, blst_p1_from_affine, blst_p1_mult,
-        blst_p1_to_affine, blst_p1_uncompress, blst_p2, blst_p2_add, blst_p2_affine,
-        blst_p2_affine_generator, blst_p2_from_affine, blst_p2_mult, blst_p2_to_affine,
-        blst_scalar, blst_sk_to_pk_in_g1,
+        blst_fp12, blst_fp12_finalverify, blst_fp12_mul, blst_p1, blst_p1_add_or_double,
+        blst_p1_affine, blst_p1_affine_generator, blst_p1_compress, blst_p1_from_affine,
+        blst_p1_mult, blst_p1_to_affine, blst_p1_uncompress, blst_p2, blst_p2_add_or_double,
+        blst_p2_affine, blst_p2_affine_generator, blst_p2_from_affine, blst_p2_mult,
+        blst_p2_to_affine, blst_scalar, blst_sk_to_pk_in_g1,
         min_sig::{PublicKey as BlstVk, SecretKey as BlstSk, Signature as BlstSig},
     };
 
@@ -132,7 +132,7 @@ pub(crate) mod unsafe_helpers {
     pub(crate) fn p1_add(p: &blst_p1, q: &blst_p1) -> blst_p1 {
         unsafe {
             let mut projective_p1 = blst_p1::default();
-            blst_p1_add(&mut projective_p1, p, q);
+            blst_p1_add_or_double(&mut projective_p1, p, q);
             projective_p1
         }
     }
@@ -148,7 +148,7 @@ pub(crate) mod unsafe_helpers {
     pub(crate) fn p2_add(p: &blst_p2, q: &blst_p2) -> blst_p2 {
         unsafe {
             let mut projective_p2 = blst_p2::default();
-            blst_p2_add(&mut projective_p2, p, q);
+            blst_p2_add_or_double(&mut projective_p2, p, q);
             projective_p2
         }
     }
@@ -159,5 +159,82 @@ pub(crate) mod unsafe_helpers {
             blst_p2_mult(&mut projective_p2, p, r.as_ptr(), nbits);
             projective_p2
         }
+    }
+
+    pub(crate) fn fr_one() -> BlstSk {
+        let mut vec_one = Vec::with_capacity(255);
+        vec_one.push(1u8);
+
+        for _ in 0..31 {
+            vec_one.push(0u8);
+        }
+
+        BlstSk::from_bytes(&vec_one).unwrap()
+    }
+
+    pub(crate) fn fr_two() -> BlstSk {
+        let mut vec_two: Vec<u8> = Vec::with_capacity(255);
+        vec_two.push(2u8);
+
+        for _ in 0..31 {
+            vec_two.push(0u8);
+        }
+
+        BlstSk::from_bytes(&vec_two).unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unsafe_helpers::*;
+
+    #[test]
+    fn test_g1_one() {
+        let one = fr_one();
+        let two = fr_two();
+
+        // Generating random point on G1
+        let p1 = sig_to_p1(&one.sign(&[42], &[], &[]));
+        let mut one_bytes = [0u8; 32];
+        one_bytes[0] = 1u8;
+
+        // Generating p1^1
+        let p1_mul = p1_mul(&p1, &one_bytes, 256);
+
+        // If we are multiplying by 1, the values should be the same
+        // p.s. we are checking in Affine coordinates as we have no guarantees that the projective Z coordinate would be the same.
+        assert!(p1_affine_to_sig(&p1) == p1_affine_to_sig(&p1_mul));
+
+        // Further check verifying that P + P = P^2
+        let p2 = sig_to_p1(&two.sign(&[42], &[], &[]));
+        let p2_added = p1_add(&p1, &p1);
+        assert_eq!(p1_affine_to_sig(&p2), p1_affine_to_sig(&p2_added));
+    }
+
+    #[test]
+    fn test_g1_mul() {
+        let one = fr_one();
+
+        // Generating random point on G1
+        let p1 = sig_to_p1(&one.sign(&[42], &[], &[]));
+        let mut big_bytes = [0u8; 32];
+        big_bytes[1] = 1u8;
+        big_bytes[0] = 2u8;
+
+        // Verifying endianness
+        let number: usize = 256 + 2;
+        assert_eq!(big_bytes[0..8], number.to_le_bytes());
+
+        // Generating p1^1
+        let p1_mul = p1_mul(&p1, &big_bytes, 256);
+
+        let mut p1_added = p1_add(&p1, &p1);
+        for _ in 0..(number - 2) {
+            p1_added = p1_add(&p1_added, &p1);
+        }
+
+        // If we are multiplying by 1, the values should be the same
+        // p.s. we are checking in Affine coordinates as we have no guarantees that the projective Z coordinate would be the same.
+        assert!(p1_affine_to_sig(&p1_mul) == p1_affine_to_sig(&p1_added));
     }
 }
