@@ -9,7 +9,8 @@ use crate::bls_multi_signature::{
 };
 
 use crate::{
-    AggregateVerificationKey, AsmSignatureError, CoreSignature, Index, VerificationKey, get_index, hash_index, hash_msg
+    AggregateVerificationKey, AsmSignatureError, CoreSignature, Index, VerificationKey, get_index,
+    hash_index, hash_msg,
 };
 
 /// Signature created by a single party who has won the lottery.
@@ -18,13 +19,18 @@ pub struct SingleSignature {
     /// The signature.
     pub sigma: CoreSignature,
     /// Signer's index
-    pub signer_index: Index
+    pub signer_index: Index,
 }
 
 impl SingleSignature {
     /// Verify an stm signature by checking that the lottery was won, the merkle path is correct,
     /// the indexes are in the desired range and the underlying multi signature validates.
-    pub fn verify(&self, pk: &VerificationKey, msg: &[u8], avk: AggregateVerificationKey) -> Result<(), AsmSignatureError> {
+    pub fn verify(
+        &self,
+        pk: &VerificationKey,
+        msg: &[u8],
+        avk: AggregateVerificationKey,
+    ) -> Result<(), AsmSignatureError> {
         // Verify signature on augmented message
         let augmented_message: Vec<u8> = [msg, &avk.0.to_bytes()].concat();
         self.basic_verify(pk, &augmented_message)?;

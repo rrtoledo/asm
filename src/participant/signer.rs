@@ -1,6 +1,6 @@
 use crate::bls_multi_signature::{BlsSigningKey, BlsVerificationKey};
 use crate::key_registration::ClosedKeyRegistration;
-use crate::{AsmSignatureError, CoreSignature, SingleSignature, get_index, augmented_index};
+use crate::{AsmSignatureError, CoreSignature, SingleSignature, augmented_index, get_index};
 use rand_core::{CryptoRng, RngCore};
 
 /// Wrapper of the MultiSignature Verification key

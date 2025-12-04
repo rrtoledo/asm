@@ -1,6 +1,5 @@
 use std::hash::{Hash, Hasher};
 
-use blake2::digest::{Digest, FixedOutput};
 use rand_core::{CryptoRng, RngCore};
 
 use serde::{Deserialize, Serialize};
@@ -69,6 +68,13 @@ impl CoreSignature {
         }
     }
 
+    pub fn multiply(self, scalar: &[u8]) -> Self {
+        CoreSignature {
+            rnd: self.rnd.mul(scalar),
+            msg: self.msg.mul(scalar),
+        }
+    }
+
     /// Convert an `CoreSignature` into bytes
     ///
     /// # Layout
@@ -85,9 +91,7 @@ impl CoreSignature {
     }
 
     /// Extract a batch compatible `SingleSignature` from a byte slice.
-    pub fn from_bytes<D: Clone + Digest + FixedOutput>(
-        bytes: &[u8],
-    ) -> Result<CoreSignature, AsmSignatureError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<CoreSignature, AsmSignatureError> {
         let sigma_rnd = BlsVerificationKey::from_bytes(
             bytes
                 .get(..96)

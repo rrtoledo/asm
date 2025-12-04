@@ -43,6 +43,26 @@ pub enum MultiSignatureError {
 
 /// Errors which can be output by ASM Aggregate signature verification.
 #[derive(Debug, Clone, thiserror::Error)]
+pub enum BatchedAsmAggregateSignatureError {
+    /// Not enough aggregates were provided
+    #[error("Not enough aggregates were provided for aggregation")]
+    NotEnoughAggregates,
+
+    /// Batch verification of STM signatures failed
+    #[error("Batch verification of STM signatures failed")]
+    BatchInvalid,
+
+    /// This error occurs when the the serialization of the raw bytes failed
+    #[error("Invalid bytes")]
+    SerializationError,
+
+    /// Generic Error
+    #[error("Generic AsmAggregateSignature Error")]
+    GenericBatchedAsmAggregateSignatureError,
+}
+
+/// Errors which can be output by ASM Aggregate signature verification.
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum AsmAggregateSignatureError {
     /// Not enough signatures were provided
     #[error("Not enough signatures were provided for aggregation")]
@@ -91,6 +111,22 @@ pub enum AsmSignatureError {
     /// Generic Error
     #[error("Generic StmSignature Error")]
     GenericAsmSignatureError,
+}
+
+/// Errors which can be output by ASM core signature verification.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum CoreSignatureError {
+    /// A party submitted an invalid signature
+    #[error("A provided signature is invalid")]
+    SignatureInvalid,
+
+    // This error occurs when the the serialization of the raw bytes failed
+    #[error("Invalid bytes")]
+    SerializationError,
+
+    /// Generic Error
+    #[error("Generic StmSignature Error")]
+    GenericCoreSignatureError,
 }
 
 /// Errors which can be outputted by key registration.
@@ -198,6 +234,24 @@ impl From<AsmSignatureError> for AsmAggregateSignatureError {
             AsmSignatureError::SignatureIndexInvalid => Self::BatchInvalid,
             AsmSignatureError::SerializationError => Self::SerializationError,
             AsmSignatureError::GenericAsmSignatureError => Self::GenericAsmAggregateSignatureError,
+        }
+    }
+}
+
+impl From<CoreSignatureError> for AsmAggregateSignatureError {
+    fn from(e: CoreSignatureError) -> Self {
+        match e {
+            CoreSignatureError::SerializationError => Self::SerializationError,
+            _ => Self::GenericAsmAggregateSignatureError,
+        }
+    }
+}
+
+impl From<AsmAggregateSignatureError> for BatchedAsmAggregateSignatureError {
+    fn from(e: AsmAggregateSignatureError) -> Self {
+        match e {
+            AsmAggregateSignatureError::BatchInvalid => Self::BatchInvalid,
+            _ => Self::GenericBatchedAsmAggregateSignatureError,
         }
     }
 }

@@ -7,7 +7,7 @@ use std::{
 
 use crate::bls_multi_signature::{
     BlsProofOfPossession, BlsSigningKey, POP,
-    helper::unsafe_helpers::{p2_add, p2_affine_to_vk, verify_pairing, vk_from_p2_affine},
+    helper::unsafe_helpers::{p2_add, p2_affine_to_vk, p2_mul, verify_pairing, vk_from_p2_affine},
 };
 use crate::error::{MultiSignatureError, blst_err_to_mithril};
 use blst::blst_p2;
@@ -66,6 +66,12 @@ impl BlsVerificationKey {
         let q = vk_from_p2_affine(other);
 
         BlsVerificationKey(p2_affine_to_vk(&p2_add(&p, &q)))
+    }
+
+    pub fn mul(&self, scalar: &[u8]) -> BlsVerificationKey {
+        let p = vk_from_p2_affine(&self);
+
+        BlsVerificationKey(p2_affine_to_vk(&p2_mul(&p, scalar, scalar.len())))
     }
 
     /// Aggregate a slice of verification keys by multiplying them together

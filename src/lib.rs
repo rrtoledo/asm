@@ -115,7 +115,7 @@ mod error;
 mod key_registration;
 mod participant;
 
-pub use aggregate_signature::{AggregateSignature, AggregateVerificationKey, BasicVerifier, Clerk};
+pub use aggregate_signature::{AggregateSignature, AggregateVerificationKey, Clerk};
 pub use error::{AsmAggregateSignatureError, AsmSignatureError, RegisterError};
 pub use key_registration::{ClosedKeyRegistration, KeyRegistration};
 pub use participant::{
@@ -140,7 +140,6 @@ pub fn get_index(vk: &BlsVerificationKey) -> Index {
     let bytes = hasher.finalize().to_vec();
     Index::from_be_bytes([bytes[0]])
 }
-
 
 pub fn augmented_index(i: Index) -> Vec<u8> {
     let mut augmented_message = Vec::new();
@@ -167,16 +166,28 @@ pub fn hash_index(i: Index) -> crate::bls_multi_signature::BlsSignature {
     BlsSignature(sig)
 }
 
- /// Compute H1(msg) as H1( index)^1
+/// Compute H1(msg) as H1(msg)^1
 pub fn hash_msg(msg: &[u8]) -> BlsSignature {
-        let blst_one = {
-            let mut one = [0u8; 32];
-            one[31] = 1;
-            crate::bls_multi_signature::BlsSigningKey::from_bytes(&one)
-                .map_err(|_| AsmSignatureError::GenericAsmSignatureError)
-                .unwrap()
-        };
-        let sig = blst_one.to_blst_secret_key().sign(msg, &[], &[]);
+    let blst_one = {
+        let mut one = [0u8; 32];
+        one[31] = 1;
+        crate::bls_multi_signature::BlsSigningKey::from_bytes(&one)
+            .map_err(|_| AsmSignatureError::GenericAsmSignatureError)
+            .unwrap()
+    };
+    let sig = blst_one.to_blst_secret_key().sign(msg, &[], &[]);
 
-        BlsSignature(sig)
+    BlsSignature(sig)
+}
+
+use std::collections::HashSet;
+
+fn has_duplicates<T: Eq + std::hash::Hash>(v: &[T]) -> bool {
+    let mut seen = HashSet::new();
+    for item in v {
+        if !seen.insert(item) {
+            return true;
+        }
     }
+    false
+}

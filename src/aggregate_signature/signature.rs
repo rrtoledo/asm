@@ -1,15 +1,16 @@
-use blake2::digest::{Digest, FixedOutput};
-
+use blake2::{Blake2b, Digest};
+use digest::consts::U16;
 use serde::{Deserialize, Serialize};
-
-use crate::bls_multi_signature::{BlsSignature, BlsVerificationKey, helper::unsafe_helpers::verify_double_pairing};
-use crate::key_registration::RegisteredParty;
-use crate::{
-    AggregateVerificationKey, AsmAggregateSignatureError, BasicVerifier, ClosedKeyRegistration,
-    CoreSignature, Index, SingleSignature, hash_index, hash_msg
-};
-
 use std::collections::HashSet;
+
+use crate::bls_multi_signature::{
+    BlsSignature, BlsVerificationKey, helper::unsafe_helpers::verify_double_pairing,
+};
+use crate::error::{BatchedAsmAggregateSignatureError, CoreSignatureError};
+use crate::{
+    AggregateVerificationKey, AsmAggregateSignatureError, ClosedKeyRegistration, CoreSignature,
+    Index, SingleSignature, has_duplicates, hash_index, hash_msg,
+};
 
 /// `AggregateSignature` uses the "concatenation" proving system (as described in Section 4.3 of the original paper.)
 /// This means that the aggregated signature contains a vector with all individual signatures.
@@ -21,125 +22,132 @@ pub struct BatchedAggregateSignature {
 }
 
 impl BatchedAggregateSignature {
-    pub fn batch(asms: &[AggregateSignature],
-    msg: &[u8],
-    closed_ref: &ClosedKeyRegistration) -> Self {
-        !panic!("todo")
+    pub fn batch(
+        asms: &[AggregateSignature],
+        msg: &[u8],
+        closed_reg: &ClosedKeyRegistration,
+    ) -> Result<Self, BatchedAsmAggregateSignatureError> {
+        if asms.len() < 2 {
+            return Err(BatchedAsmAggregateSignatureError::NotEnoughAggregates);
+        }
+
+        for asm in asms {
+            asm.verify(msg, closed_reg.aggregate_key)?;
+        }
+
+        Ok(Self::batch_unsafe(asms))
     }
 
     pub fn batch_unsafe(asms: &[AggregateSignature]) -> Self {
-        !panic!("todo")
+        let mut scalars = Vec::with_capacity(asms.len() * 128);
+
+        let mut hasher = Blake2b::<U16>::new();
+        let mut signers = Vec::with_capacity(asms.len());
+
+        // Initializing the hasher with all signers making sure to separate the asm with a counter
+        // and collecting all signers in vector
+        for (i, asm) in asms.iter().enumerate() {
+            let signers_i = asm.signers.clone();
+            signers.push(signers_i.clone());
+
+            hasher.update(i.to_be_bytes());
+            for signer in signers_i.clone() {
+                hasher.update(&[signer]);
+            }
+        }
+
+        // Generating the scalars
+        for i in 0..asms.len() {
+            hasher.update(i.to_be_bytes());
+            let hash_scalar = hasher.clone();
+            scalars.push(hash_scalar.finalize().to_vec());
+        }
+
+        // MSM on CoreSignatures and Scalars
+        let mut signature: Option<CoreSignature> = None;
+        asms.iter().zip(scalars).for_each(|(asm_i, scalar_i)| {
+            let randomized_sig = asm_i.signature.clone().multiply(&scalar_i);
+
+            signature = Some(if let Some(sig) = &signature {
+                randomized_sig.add_unsafe(sig)
+            } else {
+                randomized_sig
+            });
+        });
+
+        BatchedAggregateSignature {
+            signature: signature.unwrap(),
+            signers,
+        }
     }
 
     /// Batch verify a set of signatures, with different messages and avks.
     pub fn verify(
         self,
-        msgs: &[u8],
+        msg: &[u8],
         closed_reg: &ClosedKeyRegistration,
-    ) -> Result<(), AsmAggregateSignatureError> {
-        let batch_size = stm_signatures.len();
-        assert_eq!(
-            batch_size,
-            msgs.len(),
-            "Number of messages should correspond to size of the batch"
-        );
-        assert_eq!(
-            batch_size,
-            avks.len(),
-            "Number of avks should correspond to size of the batch"
-        );
-        assert_eq!(
-            batch_size,
-            parameters.len(),
-            "Number of parameters should correspond to size of the batch"
-        );
+    ) -> Result<(), BatchedAsmAggregateSignatureError> {
+        let mut scalars = Vec::with_capacity(self.signers.len() * 128);
 
-        let mut aggr_sigs = Vec::with_capacity(batch_size);
-        let mut aggr_vks = Vec::with_capacity(batch_size);
-        for (idx, sig_group) in stm_signatures.iter().enumerate() {
-            sig_group.preliminary_verify(&msgs[idx], &avks[idx], &parameters[idx])?;
-            let grouped_sigs: Vec<BlsSignature> = sig_group
-                .signatures
-                .iter()
-                .map(|sig_reg| sig_reg.sig.sigma)
-                .collect();
-            let grouped_vks: Vec<BlsVerificationKey> = sig_group
-                .signatures
-                .iter()
-                .map(|sig_reg| sig_reg.reg_party.0)
-                .collect();
+        let mut hasher = Blake2b::<U16>::new();
+        for (i, signers) in self.signers.iter().enumerate() {
+            let signers_i = signers.clone();
+            if has_duplicates(&signers_i) {
+                return Err(BatchedAsmAggregateSignatureError::BatchInvalid);
+            }
 
-            let (aggr_vk, aggr_sig) = BlsSignature::aggregate(&grouped_vks, &grouped_sigs).unwrap();
-            aggr_sigs.push(aggr_sig);
-            aggr_vks.push(aggr_vk);
+            hasher.update(i.to_be_bytes());
+            for signer in signers_i.clone() {
+                hasher.update(&[signer]);
+            }
         }
 
-        let concat_msgs: Vec<Vec<u8>> = msgs
-            .iter()
-            .zip(avks.iter())
-            .map(|(msg, avk)| {
-                avk.get_merkle_tree_batch_commitment()
-                    .concatenate_with_message(msg)
-            })
-            .collect();
+        // Generating the scalars
+        for i in 0..self.signers.len() {
+            hasher.update(i.to_be_bytes());
+            let hash_scalar = hasher.clone();
+            scalars.push(hash_scalar.finalize().to_vec());
+        }
 
-        BlsSignature::batch_verify_aggregates(&concat_msgs, &aggr_vks, &aggr_sigs)?;
+        // Compute batched key
+        let mut batched_key: Option<BlsSignature> = None;
+        self.signers
+            .iter()
+            .zip(scalars)
+            .for_each(|(signers_i, scalar_i)| {
+                let hashed_indices =
+                    AggregateSignature::compute_hash_index(signers_i).mul(&scalar_i);
+
+                batched_key = Some(if let Some(key) = &batched_key {
+                    hashed_indices.add(key)
+                } else {
+                    hashed_indices
+                });
+            });
+
+        // Verify aggregate signature
+        if !verify_double_pairing(
+            &closed_reg.aggregate_key.0,
+            &self.signature.msg.0,
+            &self.signature.rnd,
+            &batched_key.unwrap().0,
+            &hash_msg(msg).0,
+        ) {
+            return Err(BatchedAsmAggregateSignatureError::BatchInvalid);
+        }
+
         Ok(())
     }
 
     /// Batch verify a set of signatures, with different messages and avks.
     pub fn batch_verify(
-        basm: &[Self],
-        msgs: &[u8],
-        avks: &[AggregateVerificationKey<D>],
-    ) -> Result<(), AsmAggregateSignatureError> {
-        let batch_size = stm_signatures.len();
-        assert_eq!(
-            batch_size,
-            msgs.len(),
-            "Number of messages should correspond to size of the batch"
-        );
-        assert_eq!(
-            batch_size,
-            avks.len(),
-            "Number of avks should correspond to size of the batch"
-        );
-        assert_eq!(
-            batch_size,
-            parameters.len(),
-            "Number of parameters should correspond to size of the batch"
-        );
+        asms: &[AggregateSignature],
+        msg: &[u8],
+        closed_reg: &ClosedKeyRegistration,
+    ) -> Result<(), BatchedAsmAggregateSignatureError> {
+        let batched = Self::batch(asms, msg, closed_reg)?;
 
-        let mut aggr_sigs = Vec::with_capacity(batch_size);
-        let mut aggr_vks = Vec::with_capacity(batch_size);
-        for (idx, sig_group) in stm_signatures.iter().enumerate() {
-            sig_group.preliminary_verify(&msgs[idx], &avks[idx], &parameters[idx])?;
-            let grouped_sigs: Vec<BlsSignature> = sig_group
-                .signatures
-                .iter()
-                .map(|sig_reg| sig_reg.sig.sigma)
-                .collect();
-            let grouped_vks: Vec<BlsVerificationKey> = sig_group
-                .signatures
-                .iter()
-                .map(|sig_reg| sig_reg.reg_party.0)
-                .collect();
-
-            let (aggr_vk, aggr_sig) = BlsSignature::aggregate(&grouped_vks, &grouped_sigs).unwrap();
-            aggr_sigs.push(aggr_sig);
-            aggr_vks.push(aggr_vk);
-        }
-
-        let concat_msgs: Vec<Vec<u8>> = msgs
-            .iter()
-            .zip(avks.iter())
-            .map(|(msg, avk)| {
-                avk.get_merkle_tree_batch_commitment()
-                    .concatenate_with_message(msg)
-            })
-            .collect();
-
-        BlsSignature::batch_verify_aggregates(&concat_msgs, &aggr_vks, &aggr_sigs)?;
+        batched.verify(msg, closed_reg);
         Ok(())
     }
 }
@@ -150,7 +158,6 @@ impl BatchedAggregateSignature {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateSignature {
     pub signature: CoreSignature,
-    pub avk: AggregateVerificationKey,
     pub signers: Vec<Index>,
 }
 
@@ -197,7 +204,6 @@ impl AggregateSignature {
 
                 Ok(AggregateSignature {
                     signature: signature.unwrap(),
-                    avk,
                     signers,
                 })
             }
@@ -240,11 +246,7 @@ impl AggregateSignature {
                     signers.push(sig.signer_index);
                 }
 
-                Ok(AggregateSignature {
-                    signature,
-                    avk: self.avk,
-                    signers,
-                })
+                Ok(AggregateSignature { signature, signers })
             }
         }
     }
@@ -253,7 +255,7 @@ impl AggregateSignature {
         &self,
         asms: Vec<AggregateSignature>,
         msg: &[u8],
-        closed_reg: &ClosedKeyRegistration
+        closed_reg: &ClosedKeyRegistration,
     ) -> Result<AggregateSignature, AsmAggregateSignatureError> {
         match asms.len() {
             0 => Err(AsmAggregateSignatureError::NotEnoughAggregates),
@@ -264,9 +266,9 @@ impl AggregateSignature {
                 let mut vk_hashset = HashSet::<Index>::from_iter(self.signers.clone());
 
                 for asm in asms {
-                    // If the signature's avk is correct and the signer's contribution was not added yet
+                    // If the signer's contribution was not added yet
                     let asm_hashset = HashSet::<Index>::from_iter(asm.signers.clone());
-                    if asm.avk != self.avk || !vk_hashset.is_disjoint(&asm_hashset) {
+                    if !vk_hashset.is_disjoint(&asm_hashset) {
                         return Err(AsmAggregateSignatureError::BatchInvalid);
                     }
 
@@ -275,7 +277,7 @@ impl AggregateSignature {
 
                     // Updating core signature
                     signature = signature.add_unsafe(&asm.signature);
-                    
+
                     // Updating vk acc and signers set
                     for signer in asm.signers {
                         let _ = vk_hashset.insert(signer);
@@ -283,13 +285,23 @@ impl AggregateSignature {
                     }
                 }
 
-                Ok(AggregateSignature {
-                    signature,
-                    avk: self.avk,
-                    signers,
-                })
+                Ok(AggregateSignature { signature, signers })
             }
         }
+    }
+
+    pub fn compute_hash_index(signers: &[u8]) -> BlsSignature {
+        let mut hashed_indices = None;
+        for &signer in signers {
+            // Combine each signer's index
+            let hashed_index = hash_index(signer);
+            if hashed_indices.is_none() {
+                hashed_indices = Some(hashed_index);
+            } else {
+                hashed_indices = Some(hashed_index.add(&hashed_indices.unwrap()));
+            }
+        }
+        hashed_indices.unwrap()
     }
 
     /// Verify aggregate signature, by checking that
@@ -303,29 +315,18 @@ impl AggregateSignature {
         msg: &[u8],
         avk: AggregateVerificationKey,
     ) -> Result<(), AsmAggregateSignatureError> {
-        let signers = self.signers.clone();
         if self.signers.len() == 0 {
             return Err(AsmAggregateSignatureError::BatchInvalid);
         }
 
-        let mut hashed_indices = None;
-        for signer in signers {
-
-            // Combine each signer's index
-            let hashed_index = hash_index(signer);
-            if hashed_indices.is_none() {
-                hashed_indices = Some(hashed_index);
-            } else {
-                hashed_indices = Some(hashed_index.add(&hashed_indices.unwrap()));
-            }
-        }
+        let hashed_indices = Self::compute_hash_index(&self.signers);
 
         // Verify aggregate signature
         if !verify_double_pairing(
             &avk.0,
             &self.signature.msg.0,
             &self.signature.rnd,
-            &hashed_indices.unwrap().0,
+            &hashed_indices.0,
             &hash_msg(msg).0,
         ) {
             return Err(AsmAggregateSignatureError::BatchInvalid);
@@ -333,8 +334,6 @@ impl AggregateSignature {
 
         Ok(())
     }
-
-    
 
     /// Convert multi signature to bytes
     /// # Layout
@@ -344,81 +343,31 @@ impl AggregateSignature {
     /// * Batch proof
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        // This proof type is not strictly necessary, but it will help to identify
-        // the type of the proof used to aggregate when implementing multiple aggregation proof systems.
-        // We use '0' for concatenation proof.
-        let proof_type: u8 = 0;
-        out.extend_from_slice(&proof_type.to_be_bytes());
-        out.extend_from_slice(&u64::try_from(self.signatures.len()).unwrap().to_be_bytes());
-        for sig_reg in &self.signatures {
-            out.extend_from_slice(
-                &u64::try_from(sig_reg.to_bytes().len())
-                    .unwrap()
-                    .to_be_bytes(),
-            );
-            out.extend_from_slice(&sig_reg.to_bytes());
+        out.extend_from_slice(&self.signature.to_bytes());
+        for &signer in &self.signers {
+            out.push(signer);
         }
-        let proof = &self.batch_proof;
-        out.extend_from_slice(&proof.to_bytes());
-
         out
     }
 
     ///Extract a `AggregateSignature` from a byte slice.
-    pub fn from_bytes(
-        bytes: &[u8],
-    ) -> Result<AggregateSignature<D>, StmAggregateSignatureError<D>> {
-        let mut u8_bytes = [0u8; 1];
-        let mut bytes_index = 0;
-
-        u8_bytes.copy_from_slice(
-            bytes
-                .get(..1)
-                .ok_or(StmAggregateSignatureError::SerializationError)?,
-        );
-        bytes_index += 1;
-        let proof_type = u8::from_be_bytes(u8_bytes);
-        if proof_type != 0 {
-            return Err(StmAggregateSignatureError::SerializationError);
-        }
-
-        let mut u64_bytes = [0u8; 8];
+    pub fn from_bytes(bytes: &[u8]) -> Result<AggregateSignature, AsmAggregateSignatureError> {
+        let mut u64_bytes = [0u8; 96];
         u64_bytes.copy_from_slice(
             bytes
-                .get(bytes_index..bytes_index + 8)
-                .ok_or(StmAggregateSignatureError::SerializationError)?,
+                .get(..96)
+                .ok_or(CoreSignatureError::SerializationError)?,
         );
-        let total_sigs = usize::try_from(u64::from_be_bytes(u64_bytes))
-            .map_err(|_| StmAggregateSignatureError::SerializationError)?;
-        bytes_index += 8;
+        let signature = CoreSignature::from_bytes(&u64_bytes)?;
 
-        let mut sig_reg_list = Vec::with_capacity(total_sigs);
-        for _ in 0..total_sigs {
-            u64_bytes.copy_from_slice(
-                bytes
-                    .get(bytes_index..bytes_index + 8)
-                    .ok_or(StmAggregateSignatureError::SerializationError)?,
-            );
-            let sig_reg_size = usize::try_from(u64::from_be_bytes(u64_bytes))
-                .map_err(|_| StmAggregateSignatureError::SerializationError)?;
-            let sig_reg = SingleSignatureWithRegisteredParty::from_bytes::<D>(
-                bytes
-                    .get(bytes_index + 8..bytes_index + 8 + sig_reg_size)
-                    .ok_or(StmAggregateSignatureError::SerializationError)?,
-            )?;
-            bytes_index += 8 + sig_reg_size;
-            sig_reg_list.push(sig_reg);
+        let mut bytes_index = 96;
+        let total_signers = (bytes.len() - 96);
+        let mut signers = Vec::with_capacity(total_signers);
+        for _ in 0..total_signers {
+            signers.push(bytes[bytes_index]);
+            bytes_index += 1;
         }
 
-        let batch_proof = MerkleBatchPath::from_bytes(
-            bytes
-                .get(bytes_index..)
-                .ok_or(StmAggregateSignatureError::SerializationError)?,
-        )?;
-
-        Ok(AggregateSignature {
-            signatures: sig_reg_list,
-            batch_proof,
-        })
+        Ok(AggregateSignature { signature, signers })
     }
 }

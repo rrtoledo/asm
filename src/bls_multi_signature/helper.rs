@@ -1,9 +1,10 @@
 pub(crate) mod unsafe_helpers {
     use blst::{
-        blst_fp12, blst_fp12_finalverify, blst_fp12_mul, blst_p1, blst_p1_add, blst_p1_affine,
-        blst_p1_affine_generator, blst_p1_compress, blst_p1_from_affine, blst_p1_to_affine,
-        blst_p1_uncompress, blst_p2, blst_p2_add, blst_p2_affine, blst_p2_affine_generator,
-        blst_p2_from_affine, blst_p2_to_affine, blst_scalar, blst_sk_to_pk_in_g1,
+        blst_fp12, blst_fp12_finalverify, blst_fp12_mul, blst_fr, blst_fr_from_uint64, blst_p1,
+        blst_p1_add, blst_p1_affine, blst_p1_affine_generator, blst_p1_compress,
+        blst_p1_from_affine, blst_p1_mult, blst_p1_to_affine, blst_p1_uncompress, blst_p2,
+        blst_p2_add, blst_p2_affine, blst_p2_affine_generator, blst_p2_from_affine, blst_p2_mult,
+        blst_p2_to_affine, blst_scalar, blst_sk_to_pk_in_g1,
         min_sig::{PublicKey as BlstVk, SecretKey as BlstSk, Signature as BlstSig},
     };
 
@@ -136,10 +137,26 @@ pub(crate) mod unsafe_helpers {
         }
     }
 
+    pub(crate) fn p1_mul(p: &blst_p1, r: &[u8], nbits: usize) -> blst_p1 {
+        unsafe {
+            let mut projective_p1 = blst_p1::default();
+            blst_p1_mult(&mut projective_p1, p, r.as_ptr(), nbits);
+            projective_p1
+        }
+    }
+
     pub(crate) fn p2_add(p: &blst_p2, q: &blst_p2) -> blst_p2 {
         unsafe {
             let mut projective_p2 = blst_p2::default();
             blst_p2_add(&mut projective_p2, p, q);
+            projective_p2
+        }
+    }
+
+    pub(crate) fn p2_mul(p: &blst_p2, r: &[u8], nbits: usize) -> blst_p2 {
+        unsafe {
+            let mut projective_p2 = blst_p2::default();
+            blst_p2_mult(&mut projective_p2, p, r.as_ptr(), nbits);
             projective_p2
         }
     }

@@ -1,9 +1,7 @@
-use blake2::digest::{Digest, FixedOutput};
-
 use crate::{
-    AggregateSignature, AggregateVerificationKey, AggregationError, BasicVerifier,
-    ClosedKeyRegistration, Index, Signer, SingleSignature, SingleSignatureWithRegisteredParty,
-    VerificationKey,
+    AggregateSignature, AggregateVerificationKey, AsmAggregateSignatureError,
+    ClosedKeyRegistration, Signer, SingleSignature, aggregate_signature::BatchedAggregateSignature,
+    error::BatchedAsmAggregateSignatureError,
 };
 
 /// `Clerk` can verify and aggregate `SingleSignature`s and verify `AggregateSignature`s.
@@ -42,63 +40,82 @@ impl Clerk {
         &self,
         sigs: &[SingleSignature],
         msg: &[u8],
-    ) -> Result<AggregateSignature, AggregationError> {
-        let sig_reg_list = sigs
-            .iter()
-            .map(|sig| SingleSignatureWithRegisteredParty {
-                sig: sig.clone(),
-                reg_party: self.closed_reg.reg_parties[sig.signer_index as usize],
-            })
-            .collect::<Vec<SingleSignatureWithRegisteredParty>>();
+    ) -> Result<AggregateSignature, AsmAggregateSignatureError> {
+        let mut extended_signatures = Vec::with_capacity(sigs.len());
+        for sig in sigs {
+            let vk_option = self.closed_reg.get_vk(sig.signer_index);
+            match vk_option {
+                Some(vk) => extended_signatures.push((sig.clone(), vk)),
+                None => return Err(AsmAggregateSignatureError::SignatureIndexInvalid),
+            }
+        }
 
-        let avk = AggregateVerificationKey::from(&self.closed_reg);
-        let msgp = avk
-            .get_merkle_tree_batch_commitment()
-            .concatenate_with_message(msg);
-        let mut unique_sigs = BasicVerifier::select_valid_signatures_for_k_indices(
-            &self.closed_reg.total_stake,
-            &self.params,
-            &msgp,
-            &sig_reg_list,
-        )?;
+        AggregateSignature::aggregate_signatures(extended_signatures, msg, &self.closed_reg)
+    }
 
-        unique_sigs.sort_unstable();
+    pub fn update_aggregate(
+        &self,
+        asm: AggregateSignature,
+        sigs: &[SingleSignature],
+        msg: &[u8],
+    ) -> Result<AggregateSignature, AsmAggregateSignatureError> {
+        let mut extended_signatures = Vec::with_capacity(sigs.len());
+        for sig in sigs {
+            let vk_option = self.closed_reg.get_vk(sig.signer_index);
+            match vk_option {
+                Some(vk) => extended_signatures.push((sig.clone(), vk)),
+                None => return Err(AsmAggregateSignatureError::SignatureIndexInvalid),
+            }
+        }
+        AggregateSignature::update_aggregate(&asm, extended_signatures, msg, &self.closed_reg)
+    }
 
-        let mt_index_list = unique_sigs
-            .iter()
-            .map(|sig_reg| sig_reg.sig.signer_index as usize)
-            .collect::<Vec<usize>>();
+    pub fn merge_aggregates(
+        &self,
+        asms: Vec<AggregateSignature>,
+        sigs: &[SingleSignature],
+        msg: &[u8],
+    ) -> Result<AggregateSignature, AsmAggregateSignatureError> {
+        let mut asms_cloned = asms.clone();
+        let asm = asms_cloned.pop().unwrap();
 
-        let batch_proof = self
-            .closed_reg
-            .merkle_tree
-            .compute_merkle_tree_batch_path(mt_index_list);
+        asm.merge_aggregates(asms_cloned, msg, &self.closed_reg)
+    }
 
-        Ok(AggregateSignature {
-            signatures: unique_sigs,
-            batch_proof,
-        })
+    pub fn verify_aggregate(
+        &self,
+        asm: AggregateSignature,
+        msg: &[u8],
+    ) -> Result<(), AsmAggregateSignatureError> {
+        asm.verify(msg, self.closed_reg.aggregate_key)
+    }
+
+    pub fn batch_aggregates(
+        &self,
+        asms: Vec<AggregateSignature>,
+        msg: &[u8],
+    ) -> Result<BatchedAggregateSignature, BatchedAsmAggregateSignatureError> {
+        BatchedAggregateSignature::batch(&asms, msg, &self.closed_reg)
+    }
+
+    pub fn verify_batched(
+        &self,
+        batched: BatchedAggregateSignature,
+        msg: &[u8],
+    ) -> Result<(), BatchedAsmAggregateSignatureError> {
+        batched.verify(msg, &self.closed_reg)
+    }
+
+    pub fn batch_verify(
+        &self,
+        asms: &[AggregateSignature],
+        msg: &[u8],
+    ) -> Result<(), BatchedAsmAggregateSignatureError> {
+        BatchedAggregateSignature::batch_verify(asms, msg, &self.closed_reg)
     }
 
     /// Compute the `AggregateVerificationKey` related to the used registration.
-    pub fn compute_aggregate_verification_key(&self) -> AggregateVerificationKey<D> {
+    pub fn compute_aggregate_verification_key(&self) -> AggregateVerificationKey {
         AggregateVerificationKey::from(&self.closed_reg)
-    }
-
-    /// Get the (VK, stake) of a party given its index.
-    pub fn get_registered_party_for_index(
-        &self,
-        party_index: &Index,
-    ) -> Option<(VerificationKey, Stake)> {
-        self.closed_reg
-            .reg_parties
-            .get(*party_index as usize)
-            .map(|&r| r.into())
-    }
-
-    /// Get the (VK, stake) of a party given its index.
-    #[deprecated(since = "0.5.0", note = "Use `get_registered_party_for_index` instead")]
-    pub fn get_reg_party(&self, party_index: &Index) -> Option<(VerificationKey, Stake)> {
-        Self::get_registered_party_for_index(self, party_index)
     }
 }

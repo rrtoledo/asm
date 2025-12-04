@@ -11,7 +11,7 @@ use digest::consts::U16;
 use crate::bls_multi_signature::{
     BlsVerificationKey,
     helper::unsafe_helpers::{
-        p1_add, p1_affine_to_sig, p2_affine_to_vk, sig_to_p1, vk_from_p2_affine,
+        p1_add, p1_affine_to_sig, p1_mul, p2_affine_to_vk, sig_to_p1, vk_from_p2_affine,
     },
 };
 use crate::error::{MultiSignatureError, blst_err_to_mithril};
@@ -77,6 +77,12 @@ impl BlsSignature {
         let q = sig_to_p1(&other.0);
 
         BlsSignature(p1_affine_to_sig(&p1_add(&p, &q)))
+    }
+
+    pub fn mul(&self, scalar: &[u8]) -> BlsSignature {
+        let p = sig_to_p1(&self.0);
+
+        BlsSignature(p1_affine_to_sig(&p1_mul(&p, scalar, scalar.len())))
     }
 
     /// Aggregate a slice of Signatures by multiplying them together
