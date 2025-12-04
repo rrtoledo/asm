@@ -73,7 +73,6 @@ impl Clerk {
     pub fn merge_aggregates(
         &self,
         asms: Vec<AggregateSignature>,
-        sigs: &[SingleSignature],
         msg: &[u8],
     ) -> Result<AggregateSignature, AsmAggregateSignatureError> {
         let mut asms_cloned = asms.clone();

@@ -1,7 +1,5 @@
 //! Mithril-stm participant including Initializer and Signer
 
-use crate::{AsmSignatureError, BlsSignature, Index, bls_multi_signature::BlsSigningKey};
-
 mod core_signature;
 mod initializer;
 mod signer;

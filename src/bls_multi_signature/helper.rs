@@ -1,6 +1,6 @@
 pub(crate) mod unsafe_helpers {
     use blst::{
-        blst_fp12, blst_fp12_finalverify, blst_fp12_mul, blst_fr, blst_fr_from_uint64, blst_p1,
+        blst_fp12, blst_fp12_finalverify, blst_fp12_mul, blst_p1,
         blst_p1_add, blst_p1_affine, blst_p1_affine_generator, blst_p1_compress,
         blst_p1_from_affine, blst_p1_mult, blst_p1_to_affine, blst_p1_uncompress, blst_p2,
         blst_p2_add, blst_p2_affine, blst_p2_affine_generator, blst_p2_from_affine, blst_p2_mult,

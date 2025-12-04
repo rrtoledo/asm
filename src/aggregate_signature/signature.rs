@@ -147,8 +147,7 @@ impl BatchedAggregateSignature {
     ) -> Result<(), BatchedAsmAggregateSignatureError> {
         let batched = Self::batch(asms, msg, closed_reg)?;
 
-        batched.verify(msg, closed_reg);
-        Ok(())
+        batched.verify(msg, closed_reg)
     }
 }
 
@@ -361,7 +360,7 @@ impl AggregateSignature {
         let signature = CoreSignature::from_bytes(&u64_bytes)?;
 
         let mut bytes_index = 96;
-        let total_signers = (bytes.len() - 96);
+        let total_signers = bytes.len() - 96;
         let mut signers = Vec::with_capacity(total_signers);
         for _ in 0..total_signers {
             signers.push(bytes[bytes_index]);
