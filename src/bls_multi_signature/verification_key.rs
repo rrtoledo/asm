@@ -21,10 +21,15 @@ use serde::{Deserialize, Serialize};
 /// from the blst library.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BlsVerificationKey(pub BlstVk);
+const BLS_VK_SIZE: usize = 96;
 
 impl BlsVerificationKey {
+    pub fn size() -> usize {
+        BLS_VK_SIZE
+    }
+
     /// Convert an `VerificationKey` to its compressed byte representation.
-    pub fn to_bytes(self) -> [u8; 96] {
+    pub fn to_bytes(self) -> [u8; BLS_VK_SIZE] {
         self.0.to_bytes()
     }
 
@@ -35,7 +40,7 @@ impl BlsVerificationKey {
     /// order subgroup of the curve Bls12-381.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, MultiSignatureError> {
         let bytes = bytes
-            .get(..96)
+            .get(..BLS_VK_SIZE)
             .ok_or(MultiSignatureError::SerializationError)?;
         match BlstVk::key_validate(bytes) {
             Ok(vk) => Ok(Self(vk)),
@@ -216,8 +221,8 @@ impl BlsVerificationKeyProofOfPossession {
     /// * Proof of Possession
     pub fn to_bytes(self) -> [u8; 192] {
         let mut vkpop_bytes = [0u8; 192];
-        vkpop_bytes[..96].copy_from_slice(&self.vk.to_bytes());
-        vkpop_bytes[96..].copy_from_slice(&self.pop.to_bytes());
+        vkpop_bytes[..BLS_VK_SIZE].copy_from_slice(&self.vk.to_bytes());
+        vkpop_bytes[BLS_VK_SIZE..].copy_from_slice(&self.pop.to_bytes());
         vkpop_bytes
     }
 
@@ -225,13 +230,13 @@ impl BlsVerificationKeyProofOfPossession {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, MultiSignatureError> {
         let mvk = BlsVerificationKey::from_bytes(
             bytes
-                .get(..96)
+                .get(..BLS_VK_SIZE)
                 .ok_or(MultiSignatureError::SerializationError)?,
         )?;
 
         let pop = BlsProofOfPossession::from_bytes(
             bytes
-                .get(96..)
+                .get(BLS_VK_SIZE..)
                 .ok_or(MultiSignatureError::SerializationError)?,
         )?;
 

@@ -19,6 +19,7 @@ use crate::error::{MultiSignatureError, blst_err_to_mithril};
 /// MultiSig signature, which is a wrapper over the `BlstSig` type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlsSignature(pub BlstSig);
+const BLS_SIG_SIZE: usize = 48;
 
 impl BlsSignature {
     /// Verify a signature against a verification key.
@@ -36,8 +37,12 @@ impl BlsSignature {
         )
     }
 
+    pub fn size() -> usize {
+        BLS_SIG_SIZE
+    }
+
     /// Convert an `Signature` to its compressed byte representation.
-    pub fn to_bytes(self) -> [u8; 48] {
+    pub fn to_bytes(self) -> [u8; BLS_SIG_SIZE] {
         self.0.to_bytes()
     }
 
@@ -47,7 +52,7 @@ impl BlsSignature {
     /// Returns an error if the byte string does not represent a point in the curve.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, MultiSignatureError> {
         let bytes = bytes
-            .get(..48)
+            .get(..BLS_SIG_SIZE)
             .ok_or(MultiSignatureError::SerializationError)?;
         match BlstSig::sig_validate(bytes, true) {
             Ok(sig) => Ok(Self(sig)),
