@@ -84,7 +84,7 @@ impl Signer {
             // Signing the index with the secret key and combining them all
             // together with the membership key ck for aggregation
             let sk_sig = self.sk.sign(&signer_index.augmented_index());
-            let sigma = core_sig.add_msg(&sk_sig).add_msg(&ck);
+            let sigma = core_sig.add_sig(&sk_sig).add_sig(&ck);
 
             return Ok(SingleSignature {
                 signer_index,

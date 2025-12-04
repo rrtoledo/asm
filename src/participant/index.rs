@@ -70,9 +70,20 @@ impl Index {
     /// Compute it as the signature H1(b"index" || index)^sk with sk=1
     pub fn hash_to_g1(&self) -> crate::bls_multi_signature::BlsSignature {
         let blst_one = fr_one();
-
         let sig = blst_one.sign(&self.augmented_index(), &[], &[]);
 
         BlsSignature(sig)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bytes() {
+        let index = Index::from_usize(42);
+        let index_bytes = index.to_bytes();
+        assert_eq!(index, Index::from_bytes(&index_bytes).unwrap());
     }
 }

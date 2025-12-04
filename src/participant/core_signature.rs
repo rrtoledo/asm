@@ -32,9 +32,9 @@ impl CoreSignature {
 
     /// Verify a core signature by checking that its msg component corresponds
     /// to a signature on message msg with respect to public key its vk component.
-    pub fn verify(&self, sig: &[u8]) -> Result<(), AsmSignatureError> {
+    pub fn verify(&self, msg: &[u8]) -> Result<(), AsmSignatureError> {
         self.sig
-            .verify(sig, &self.vk)
+            .verify(msg, &self.vk)
             .map_err(|_| AsmSignatureError::SignatureInvalid)
     }
 
@@ -44,7 +44,7 @@ impl CoreSignature {
     }
 
     /// Unsafe function adding a group element to the msg component
-    pub(crate) fn add_msg(self, ck: &BlsSignature) -> Self {
+    pub(crate) fn add_sig(self, ck: &BlsSignature) -> Self {
         CoreSignature {
             vk: self.vk,
             sig: self.sig.add(&ck),
@@ -118,3 +118,63 @@ impl PartialEq for CoreSignature {
 }
 
 impl Eq for CoreSignature {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bls_multi_signature::helper::unsafe_helpers::{p1_affine_to_sig, p1_mul, sig_to_p1};
+
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::{RngCore, SeedableRng};
+
+    #[test]
+    fn test_bytes() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let msg = rng.next_u32().to_le_bytes();
+        let cs = CoreSignature::new(&msg, rng);
+        let cs_bytes = cs.to_bytes();
+        assert_eq!(cs, CoreSignature::from_bytes(&cs_bytes).unwrap());
+    }
+
+    #[test]
+    fn test_verify_positive() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let msg = rng.next_u32().to_le_bytes();
+        let cs = CoreSignature::new(&msg, rng);
+        let valid = cs.verify(&msg);
+        assert!(valid.is_ok());
+    }
+
+    #[test]
+    fn test_verify_negative() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let msg = rng.next_u32().to_le_bytes();
+        let cs = CoreSignature::new(&msg, rng);
+        let valid = cs.verify(&rng.next_u32().to_le_bytes());
+        assert!(valid.is_err());
+    }
+
+    #[test]
+    fn test_add_sig() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let msg = rng.next_u32().to_le_bytes();
+        let cs = CoreSignature::new(&msg, rng);
+        let cs_updated = cs.clone().add_sig(&cs.sig);
+        assert_eq!(cs_updated.vk, cs.vk);
+        assert_ne!(cs_updated.sig, cs.sig);
+        let p1_pow_2 = p1_mul(&sig_to_p1(&cs.sig.0), &[2u8, 0u8], 16);
+        assert_eq!(cs_updated.sig.0, p1_affine_to_sig(&p1_pow_2));
+    }
+}
