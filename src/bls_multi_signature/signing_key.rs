@@ -9,15 +9,21 @@ use crate::error::{MultiSignatureError, blst_err_to_mithril};
 #[derive(Debug, Clone)]
 pub struct BlsSigningKey(pub BlstSk);
 
+pub const BLS_SK_SIZE: usize = 32;
+
 impl BlsSigningKey {
     /// Generate a secret key
     pub fn generate(rng: &mut (impl RngCore + CryptoRng)) -> Self {
-        let mut ikm = [0u8; 32];
+        let mut ikm = [0u8; BLS_SK_SIZE];
         rng.fill_bytes(&mut ikm);
         BlsSigningKey(
             BlstSk::key_gen(&ikm, &[])
                 .expect("Error occurs when the length of ikm < 32. This will not happen here."),
         )
+    }
+
+    pub fn size() -> usize {
+        BLS_SK_SIZE
     }
 
     /// Sign a message with the given secret key
@@ -36,7 +42,7 @@ impl BlsSigningKey {
     /// Fails if the byte string represents a scalar larger than the group order.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, MultiSignatureError> {
         let bytes = bytes
-            .get(..32)
+            .get(..BLS_SK_SIZE)
             .ok_or(MultiSignatureError::SerializationError)?;
         match BlstSk::from_bytes(bytes) {
             Ok(sk) => Ok(Self(sk)),

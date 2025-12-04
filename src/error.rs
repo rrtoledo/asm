@@ -5,6 +5,18 @@ use crate::bls_multi_signature::{
     BlsSignature, BlsVerificationKey, BlsVerificationKeyProofOfPossession,
 };
 
+/// Errors which can be outputted by key registration.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum IndexError {
+    /// This error occurs when the the serialization of the raw bytes failed
+    #[error("Invalid bytes")]
+    SerializationError,
+
+    /// This error occurs when an index does not correspond to a vk
+    #[error("Invalid index")]
+    InvalidIndex,
+}
+
 /// Error types for BLS multi signatures.
 #[derive(Debug, thiserror::Error, Eq, PartialEq)]
 pub enum MultiSignatureError {
@@ -213,7 +225,7 @@ impl From<MultiSignatureError> for AsmSignatureError {
     fn from(e: MultiSignatureError) -> Self {
         match e {
             MultiSignatureError::SerializationError => Self::SerializationError,
-            MultiSignatureError::SignatureInvalid(e) => Self::SignatureInvalid,
+            MultiSignatureError::SignatureInvalid(_e) => Self::SignatureInvalid,
             MultiSignatureError::BatchInvalid => unreachable!(),
             MultiSignatureError::KeyInvalid(_) => unreachable!(),
             MultiSignatureError::AggregateSignatureInvalid => unreachable!(),

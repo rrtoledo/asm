@@ -1,159 +1,19 @@
-use blake2::{Blake2b, Digest};
-use digest::consts::U16;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use crate::bls_multi_signature::{
-    BlsSignature, BlsVerificationKey, helper::unsafe_helpers::verify_double_pairing,
+    BlsVerificationKey, helper::unsafe_helpers::verify_double_pairing,
 };
-use crate::error::{BatchedAsmAggregateSignatureError, CoreSignatureError};
+use crate::error::CoreSignatureError;
 use crate::{
-    AggregateVerificationKey, AsmAggregateSignatureError, ClosedKeyRegistration, CoreSignature,
-    Index, SingleSignature, has_duplicates, hash_index, hash_msg,
+    AggregateVerificationKey, AsmAggregateSignatureError, CS_SIZE, ClosedKeyRegistration,
+    CoreSignature, INDEX_SIZE, Index, SingleSignature, hash_msg,
 };
 
-/// `AggregateSignature` uses the "concatenation" proving system (as described in Section 4.3 of the original paper.)
-/// This means that the aggregated signature contains a vector with all individual signatures.
-/// BatchPath is also a part of the aggregate signature which covers path for all signatures.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BatchedAggregateSignature {
-    pub signature: CoreSignature,
-    pub signers: Vec<Vec<Index>>,
-}
+use super::utils::compute_hash_index;
 
-impl BatchedAggregateSignature {
-    pub fn batch(
-        asms: &[AggregateSignature],
-        msg: &[u8],
-        closed_reg: &ClosedKeyRegistration,
-    ) -> Result<Self, BatchedAsmAggregateSignatureError> {
-        if asms.len() < 2 {
-            return Err(BatchedAsmAggregateSignatureError::NotEnoughAggregates);
-        }
-
-        for asm in asms {
-            asm.verify(msg, closed_reg.aggregate_key)?;
-        }
-
-        Ok(Self::batch_unsafe(asms))
-    }
-
-    pub fn batch_unsafe(asms: &[AggregateSignature]) -> Self {
-        let mut scalars = Vec::with_capacity(asms.len() * 128);
-
-        let mut hasher = Blake2b::<U16>::new();
-        let mut signers = Vec::with_capacity(asms.len());
-
-        // Initializing the hasher with all signers making sure to separate the asm with a counter
-        // and collecting all signers in vector
-        for (i, asm) in asms.iter().enumerate() {
-            let signers_i = asm.signers.clone();
-            signers.push(signers_i.clone());
-
-            hasher.update(i.to_be_bytes());
-            for signer in signers_i.clone() {
-                hasher.update(&[signer]);
-            }
-        }
-
-        // Generating the scalars
-        for i in 0..asms.len() {
-            hasher.update(i.to_be_bytes());
-            let hash_scalar = hasher.clone();
-            scalars.push(hash_scalar.finalize().to_vec());
-        }
-
-        // MSM on CoreSignatures and Scalars
-        let mut signature: Option<CoreSignature> = None;
-        asms.iter().zip(scalars).for_each(|(asm_i, scalar_i)| {
-            let randomized_sig = asm_i.signature.clone().multiply(&scalar_i);
-
-            signature = Some(if let Some(sig) = &signature {
-                randomized_sig.add_unsafe(sig)
-            } else {
-                randomized_sig
-            });
-        });
-
-        BatchedAggregateSignature {
-            signature: signature.unwrap(),
-            signers,
-        }
-    }
-
-    /// Batch verify a set of signatures, with different messages and avks.
-    pub fn verify(
-        self,
-        msg: &[u8],
-        closed_reg: &ClosedKeyRegistration,
-    ) -> Result<(), BatchedAsmAggregateSignatureError> {
-        let mut scalars = Vec::with_capacity(self.signers.len() * 128);
-
-        let mut hasher = Blake2b::<U16>::new();
-        for (i, signers) in self.signers.iter().enumerate() {
-            let signers_i = signers.clone();
-            if has_duplicates(&signers_i) {
-                return Err(BatchedAsmAggregateSignatureError::BatchInvalid);
-            }
-
-            hasher.update(i.to_be_bytes());
-            for signer in signers_i.clone() {
-                hasher.update(&[signer]);
-            }
-        }
-
-        // Generating the scalars
-        for i in 0..self.signers.len() {
-            hasher.update(i.to_be_bytes());
-            let hash_scalar = hasher.clone();
-            scalars.push(hash_scalar.finalize().to_vec());
-        }
-
-        // Compute batched key
-        let mut batched_key: Option<BlsSignature> = None;
-        self.signers
-            .iter()
-            .zip(scalars)
-            .for_each(|(signers_i, scalar_i)| {
-                let hashed_indices =
-                    AggregateSignature::compute_hash_index(signers_i).mul(&scalar_i);
-
-                batched_key = Some(if let Some(key) = &batched_key {
-                    hashed_indices.add(key)
-                } else {
-                    hashed_indices
-                });
-            });
-
-        // Verify aggregate signature
-        if !verify_double_pairing(
-            &closed_reg.aggregate_key.0,
-            &self.signature.msg.0,
-            &self.signature.rnd,
-            &batched_key.unwrap().0,
-            &hash_msg(msg).0,
-        ) {
-            return Err(BatchedAsmAggregateSignatureError::BatchInvalid);
-        }
-
-        Ok(())
-    }
-
-    /// Batch verify a set of signatures, with different messages and avks.
-    pub fn batch_verify(
-        asms: &[AggregateSignature],
-        msg: &[u8],
-        closed_reg: &ClosedKeyRegistration,
-    ) -> Result<(), BatchedAsmAggregateSignatureError> {
-        let batched = Self::batch(asms, msg, closed_reg)?;
-
-        batched.verify(msg, closed_reg)
-    }
-}
-
-/// `AggregateSignature` uses the "concatenation" proving system (as described in Section 4.3 of the original paper.)
-/// This means that the aggregated signature contains a vector with all individual signatures.
-/// BatchPath is also a part of the aggregate signature which covers path for all signatures.
+/// `AggregateSignature` aggregate several SingleSignatures into a
+/// CoreSignature and vector of signers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateSignature {
     pub signature: CoreSignature,
@@ -161,6 +21,9 @@ pub struct AggregateSignature {
 }
 
 impl AggregateSignature {
+    // Aggregate several SingleSignatures on the same message if there os no
+    // duplicate signers, the signatures verify and their corresponding vk was
+    // registered.
     pub fn aggregate_signatures(
         extended_signatures: Vec<(SingleSignature, BlsVerificationKey)>,
         msg: &[u8],
@@ -209,6 +72,9 @@ impl AggregateSignature {
         }
     }
 
+    // Update an AggregateSignature with several SingleSignatures on the same
+    // message if there is no duplicate signers, the signatures verify and their
+    // corresponding vk was registered.
     pub fn update_aggregate(
         &self,
         extended_signatures: Vec<(SingleSignature, BlsVerificationKey)>,
@@ -250,6 +116,9 @@ impl AggregateSignature {
         }
     }
 
+    // Merge AggregateSignatures on the same message together if there is no
+    // duplicate signers, the signatures verify and their corresponding vk was
+    // registered.
     pub fn merge_aggregates(
         &self,
         asms: Vec<AggregateSignature>,
@@ -289,20 +158,6 @@ impl AggregateSignature {
         }
     }
 
-    pub fn compute_hash_index(signers: &[u8]) -> BlsSignature {
-        let mut hashed_indices = None;
-        for &signer in signers {
-            // Combine each signer's index
-            let hashed_index = hash_index(signer);
-            if hashed_indices.is_none() {
-                hashed_indices = Some(hashed_index);
-            } else {
-                hashed_indices = Some(hashed_index.add(&hashed_indices.unwrap()));
-            }
-        }
-        hashed_indices.unwrap()
-    }
-
     /// Verify aggregate signature, by checking that
     /// * each signature contains only valid indices,
     /// * the lottery is indeed won by each one of them,
@@ -318,13 +173,13 @@ impl AggregateSignature {
             return Err(AsmAggregateSignatureError::BatchInvalid);
         }
 
-        let hashed_indices = Self::compute_hash_index(&self.signers);
+        let hashed_indices = compute_hash_index(&self.signers);
 
         // Verify aggregate signature
         if !verify_double_pairing(
             &avk.0,
-            &self.signature.msg.0,
-            &self.signature.rnd,
+            &self.signature.sig.0,
+            &self.signature.vk,
             &hashed_indices.0,
             &hash_msg(msg).0,
         ) {
@@ -344,27 +199,30 @@ impl AggregateSignature {
         let mut out = Vec::new();
         out.extend_from_slice(&self.signature.to_bytes());
         for &signer in &self.signers {
-            out.push(signer);
+            out.extend_from_slice(&signer.to_bytes());
         }
         out
     }
 
     ///Extract a `AggregateSignature` from a byte slice.
     pub fn from_bytes(bytes: &[u8]) -> Result<AggregateSignature, AsmAggregateSignatureError> {
-        let mut u64_bytes = [0u8; 96];
+        let mut u64_bytes = [0u8; CS_SIZE];
         u64_bytes.copy_from_slice(
             bytes
-                .get(..96)
+                .get(..CS_SIZE)
                 .ok_or(CoreSignatureError::SerializationError)?,
         );
         let signature = CoreSignature::from_bytes(&u64_bytes)?;
 
-        let mut bytes_index = 96;
-        let total_signers = bytes.len() - 96;
+        let total_signers = (bytes.len() - CS_SIZE) / INDEX_SIZE;
         let mut signers = Vec::with_capacity(total_signers);
-        for _ in 0..total_signers {
-            signers.push(bytes[bytes_index]);
-            bytes_index += 1;
+        for i in 0..total_signers {
+            let byte_signer_i = &bytes[CS_SIZE + i * INDEX_SIZE..CS_SIZE + (i + 1) * INDEX_SIZE];
+            let signer_i = Index::from_bytes(byte_signer_i);
+            if signer_i.is_err() {
+                return Err(AsmAggregateSignatureError::SerializationError);
+            }
+            signers.push(signer_i.unwrap());
         }
 
         Ok(AggregateSignature { signature, signers })

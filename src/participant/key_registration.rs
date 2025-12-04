@@ -5,7 +5,7 @@ use crate::bls_multi_signature::{
     BlsSignature, BlsVerificationKey, BlsVerificationKeyProofOfPossession,
 };
 use crate::error::RegisterError;
-use crate::{AggregateVerificationKey, Index, get_index};
+use crate::{AggregateVerificationKey, Index};
 use serde::{Deserialize, Serialize};
 
 /// Stores a registered party with its public key and the associated stake.
@@ -37,17 +37,17 @@ impl KeyRegistration {
         pk: BlsVerificationKeyProofOfPossession,
         mks: &[BlsSignature],
     ) -> Result<(), RegisterError> {
-        if mks.len() != Index::MAX as usize {
+        if mks.len() != Index::max() as usize {
             return Err(RegisterError::IncorrectNumberMembershipKey);
         }
 
-        let index = get_index(&pk.vk);
+        let index = Index::from_vk(&pk.vk);
 
         if let Entry::Vacant(e) = self.keys.entry(index) {
             pk.verify_proof_of_possesion()?;
 
             for (i, mk) in mks.iter().enumerate() {
-                if i != index as usize {
+                if i != index.to_usize() {
                     if mk.verify(&i.to_be_bytes(), &pk.vk).is_err() {
                         return Err(RegisterError::InvalidMembershipKey);
                     }
@@ -72,7 +72,7 @@ impl KeyRegistration {
     /// This function disables `KeyReg::register`, consumes the instance of `self`, and returns a `ClosedKeyRegistration`.
     pub fn close(self) -> Result<ClosedKeyRegistration, RegisterError> {
         let mut avk: Option<BlsVerificationKey> = None;
-        let mut cks: Vec<Option<BlsSignature>> = (0..Index::MAX).map(|_| None).collect();
+        let mut cks: Vec<Option<BlsSignature>> = (0..Index::max()).map(|_| None).collect();
         let mut registered_parties = Vec::new();
 
         // Computing avk and the cks
@@ -83,8 +83,8 @@ impl KeyRegistration {
                 avk = Some(BlsVerificationKey::add(&avk.unwrap(), &reg.pk));
             }
 
-            for i in 0..(Index::MAX as usize) {
-                if i != index as usize {
+            for i in 0..(Index::max() as usize) {
+                if i != index.to_usize() {
                     if cks[i].is_none() {
                         cks[i] = Some(reg.mks[i]);
                     } else {
@@ -96,7 +96,7 @@ impl KeyRegistration {
 
         // Collecting available parties
         for (index, reg) in self.keys {
-            registered_parties.push((index, reg, cks[index as usize].unwrap()));
+            registered_parties.push((index, reg, cks[index.to_usize()].unwrap()));
         }
 
         if avk.is_some() {

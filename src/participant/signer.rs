@@ -1,6 +1,5 @@
 use crate::bls_multi_signature::{BlsSigningKey, BlsVerificationKey};
-use crate::key_registration::ClosedKeyRegistration;
-use crate::{AsmSignatureError, CoreSignature, SingleSignature, augmented_index, get_index};
+use crate::{AsmSignatureError, ClosedKeyRegistration, CoreSignature, Index, SingleSignature};
 use rand_core::{CryptoRng, RngCore};
 
 /// Wrapper of the MultiSignature Verification key
@@ -43,12 +42,8 @@ impl Signer {
         }
     }
 
-    /// This function produces a signature following the description of Section 2.4.
-    /// Once the signature is produced, this function checks whether any index in `[0,..,self.params.m]`
-    /// wins the lottery by evaluating the dense mapping.
-    /// It records all the winning indexes in `Self.indexes`.
-    /// If it wins at least one lottery, it stores the signer's merkle tree index. The proof of membership
-    /// will be handled by the aggregator.
+    /// Create a signature on a message expanded with the aggregate key if the
+    /// signer is registered.
     pub fn sign<R: RngCore + CryptoRng>(
         &self,
         msg: &[u8],
@@ -57,41 +52,51 @@ impl Signer {
         match self.closed_reg.as_ref() {
             Some(registry) => {
                 let expanded_msg = [msg, &registry.aggregate_key.0.to_bytes()].concat();
-                let signature = self.basic_sign(&expanded_msg, rng);
-                Ok(signature)
+                self.basic_sign(&expanded_msg, rng)
             }
             None => Err(AsmSignatureError::NotRegistered),
         }
     }
 
+    /// A basic signature generated without closed key registration.
+    /// The basic signature can be verified by basic verifier.
+    pub fn basic_sign<R: RngCore + CryptoRng>(
+        &self,
+        msg: &[u8],
+        rng: &mut R,
+    ) -> Result<SingleSignature, AsmSignatureError> {
+        let signer_index = Index::from_vk(&self.vk);
+
+        if let Some(registry) = &self.closed_reg {
+            let keys_opt = registry.get_keys(signer_index);
+            if keys_opt.is_none() {
+                return Err(AsmSignatureError::NotRegistered);
+            }
+
+            let (vk, ck) = keys_opt.unwrap();
+            if vk != self.vk {
+                return Err(AsmSignatureError::NotRegistered);
+            }
+
+            // Creating a core signature on fresh randomness
+            let core_sig = CoreSignature::new(msg, rng);
+
+            // Signing the index with the secret key and combining them all
+            // together with the membership key ck for aggregation
+            let sk_sig = self.sk.sign(&signer_index.augmented_index());
+            let sigma = core_sig.add_msg(&sk_sig).add_msg(&ck);
+
+            return Ok(SingleSignature {
+                signer_index,
+                sigma,
+            });
+        }
+        Err(AsmSignatureError::NotRegistered)
+    }
+
     /// Extract the verification key.
     pub fn get_verification_key(&self) -> VerificationKey {
         self.vk
-    }
-
-    /// A basic signature generated without closed key registration.
-    /// The basic signature can be verified by basic verifier.
-    /// TODO MAKE SIGNATURE AGGREGATE READY
-    pub fn basic_sign<R: RngCore + CryptoRng>(&self, msg: &[u8], rng: &mut R) -> SingleSignature {
-        let signer_index = get_index(&self.vk);
-        let closed_reg = self.closed_reg.as_ref().expect("Closed registration not found! Cannot produce SingleSignatures. Use core_sign to produce core signatures (not valid for an AsmCertificate).");
-        let (vk, ck) = closed_reg.get_keys(signer_index).expect("Signer not registered! Cannot produce SingleSignatures. Use core_sign to produce core signatures (not valid for an AsmCertificate).");
-        assert!(vk == self.vk);
-
-        // Creating a core signature on fresh randomness
-        let core_sig = CoreSignature::new(msg, rng);
-
-        // Signing the index with the secret key and combining them all
-        // together with ck for aggregation
-        let sk_sig = self.sk.sign(&augmented_index(signer_index));
-        let sigma = core_sig.add_msg(&sk_sig).add_msg(&ck);
-
-        // Adding membership key
-
-        SingleSignature {
-            signer_index,
-            sigma,
-        }
     }
 
     /// Get closed key registration

@@ -106,21 +106,16 @@
 //! # }
 //! ```
 
-use blake2::{Blake2b, Digest};
-use digest::consts::U8;
-
 mod aggregate_signature;
 mod bls_multi_signature;
 mod error;
-mod key_registration;
 mod participant;
 
 pub use aggregate_signature::{AggregateSignature, AggregateVerificationKey, Clerk};
 pub use error::{AsmAggregateSignatureError, AsmSignatureError, RegisterError};
-pub use key_registration::{ClosedKeyRegistration, KeyRegistration};
 pub use participant::{
-    CoreSignature, Initializer, Signer, SingleSignature, VerificationKey,
-    VerificationKeyProofOfPossession,
+    CS_SIZE, ClosedKeyRegistration, CoreSignature, INDEX_SIZE, Index, Initializer, KeyRegistration,
+    RegisteredParty, Signer, SingleSignature, VerificationKey, VerificationKeyProofOfPossession,
 };
 
 #[cfg(feature = "benchmark-internals")]
@@ -129,42 +124,7 @@ pub use bls_multi_signature::{
     BlsVerificationKeyProofOfPossession,
 };
 
-use crate::bls_multi_signature::{BlsSignature, BlsVerificationKey};
-
-/// Signer index
-pub type Index = u8;
-
-pub fn get_index(vk: &BlsVerificationKey) -> Index {
-    let mut hasher = Blake2b::<U8>::new();
-    hasher.update(vk.to_bytes());
-    let bytes = hasher.finalize().to_vec();
-    Index::from_be_bytes([bytes[0]])
-}
-
-pub fn augmented_index(i: Index) -> Vec<u8> {
-    let mut augmented_message = Vec::new();
-    augmented_message.extend_from_slice(b"index");
-    augmented_message.extend_from_slice(&i.to_be_bytes());
-
-    augmented_message
-}
-
-/// Compute H0(index) as H1("index" || index)^1
-pub fn hash_index(i: Index) -> crate::bls_multi_signature::BlsSignature {
-    let blst_one = {
-        let mut one = [0u8; 32];
-        one[31] = 1;
-        crate::bls_multi_signature::BlsSigningKey::from_bytes(&one)
-            .map_err(|_| AsmSignatureError::GenericAsmSignatureError)
-            .unwrap()
-    };
-
-    let sig = blst_one
-        .to_blst_secret_key()
-        .sign(&augmented_index(i), &[], &[]);
-
-    BlsSignature(sig)
-}
+use crate::bls_multi_signature::BlsSignature;
 
 /// Compute H1(msg) as H1(msg)^1
 pub fn hash_msg(msg: &[u8]) -> BlsSignature {

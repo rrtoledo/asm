@@ -19,7 +19,7 @@ use crate::error::{MultiSignatureError, blst_err_to_mithril};
 /// MultiSig signature, which is a wrapper over the `BlstSig` type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlsSignature(pub BlstSig);
-const BLS_SIG_SIZE: usize = 48;
+pub const BLS_SIG_SIZE: usize = 48;
 
 impl BlsSignature {
     /// Verify a signature against a verification key.

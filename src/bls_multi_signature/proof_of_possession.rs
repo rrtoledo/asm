@@ -1,7 +1,7 @@
 use blst::{blst_p1, min_sig::Signature as BlstSig};
 
 use crate::bls_multi_signature::{
-    BlsSigningKey, POP,
+    BLS_SIG_SIZE, BlsSigningKey, POP,
     helper::unsafe_helpers::{compress_p1, scalar_to_pk_in_g1, uncompress_p1},
 };
 use crate::error::{MultiSignatureError, blst_err_to_mithril};
@@ -17,18 +17,21 @@ pub struct BlsProofOfPossession {
     k2: blst_p1,
 }
 
+/// As we compress k2, we only have 2 G1 group elements
+pub const POP_SIZE: usize = 2 * BLS_SIG_SIZE;
+
 impl BlsProofOfPossession {
-    /// Convert to a 96 byte string.
+    /// Convert to a POP_SIZE byte string.
     ///
     /// # Layout
     /// The layout of a `MspPoP` encoding is
     /// * K1 (G1 point)
     /// * K2 (G1 point)
-    pub fn to_bytes(self) -> [u8; 96] {
-        let mut pop_bytes = [0u8; 96];
-        pop_bytes[..48].copy_from_slice(&self.k1.to_bytes());
+    pub fn to_bytes(self) -> [u8; POP_SIZE] {
+        let mut pop_bytes = [0u8; POP_SIZE];
+        pop_bytes[..BLS_SIG_SIZE].copy_from_slice(&self.k1.to_bytes());
 
-        pop_bytes[48..].copy_from_slice(&compress_p1(&self.k2)[..]);
+        pop_bytes[BLS_SIG_SIZE..].copy_from_slice(&compress_p1(&self.k2)[..]);
         pop_bytes
     }
 
@@ -36,7 +39,7 @@ impl BlsProofOfPossession {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, MultiSignatureError> {
         let k1 = match BlstSig::from_bytes(
             bytes
-                .get(..48)
+                .get(..BLS_SIG_SIZE)
                 .ok_or(MultiSignatureError::SerializationError)?,
         ) {
             Ok(key) => key,
@@ -48,11 +51,15 @@ impl BlsProofOfPossession {
 
         let k2 = uncompress_p1(
             bytes
-                .get(48..96)
+                .get(BLS_SIG_SIZE..POP_SIZE)
                 .ok_or(MultiSignatureError::SerializationError)?,
         )?;
 
         Ok(Self { k1, k2 })
+    }
+
+    pub fn size() -> usize {
+        POP_SIZE
     }
 
     pub(crate) fn get_k1(self) -> BlstSig {

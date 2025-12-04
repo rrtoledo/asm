@@ -94,11 +94,10 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};
 
+    use super::*;
+    use crate::KeyRegistration;
     use crate::bls_multi_signature::helper::unsafe_helpers::{p1_affine_to_sig, p2_affine_to_vk};
     use crate::error::{MultiSignatureError, RegisterError};
-    use crate::key_registration::KeyRegistration;
-
-    use super::*;
 
     impl PartialEq for BlsSigningKey {
         fn eq(&self, other: &Self) -> bool {
@@ -176,7 +175,7 @@ mod tests {
 
             for  j in 0..num_sigs {
                 let sk = BlsSigningKey::generate(&mut rng);
-                for i in 0..(crate::Index::MAX as usize) {
+                for i in 0..(crate::Index::max()) {
                     let sig = sk.sign( &i.to_be_bytes() );
                     mks.push(sig);
                 }

@@ -3,9 +3,10 @@ use digest::FixedOutput;
 use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use crate::bls_multi_signature::{BlsSigningKey, BlsVerificationKeyProofOfPossession};
-use crate::{Signer, error::RegisterError};
-use crate::{get_index, key_registration::*};
+use crate::bls_multi_signature::{
+    BlsSignature, BlsSigningKey, BlsVerificationKeyProofOfPossession,
+};
+use crate::{ClosedKeyRegistration, Index, RegisteredParty, Signer, error::RegisterError};
 
 /// Wrapper of the MultiSignature Verification key with proof of possession
 pub type VerificationKeyProofOfPossession = BlsVerificationKeyProofOfPossession;
@@ -35,20 +36,28 @@ impl Initializer {
         self.pk
     }
 
-    /// Build the `avk` for the given list of parties.
-    ///
-    /// Note that if this Initializer was modified *between* the last call to `register`,
-    /// then the resulting `Signer` may not be able to produce valid signatures.
-    ///
-    /// Returns an `Signer` specialized to
-    /// * this `Signer`'s ID and current stake
-    /// * this `Signer`'s parameter valuation
-    /// * the `avk` as built from the current registered parties (according to the registration service)
-    /// * the current total stake (according to the registration service)
-    /// # Error
-    /// This function fails if the initializer is not registered.
+    pub fn prepare_registration(self) -> Vec<BlsSignature> {
+        let index = Index::from_vk(&self.pk.vk);
+
+        let mut index_signatures = Vec::with_capacity(Index::max());
+
+        // We compute H_G1(i)^sk for i != index
+        for i in 0..Index::max() {
+            if index.to_usize() != i {
+                let signature = self.sk.sign(&i.to_be_bytes());
+                index_signatures.push(signature);
+            } else {
+                // This index signature shall remain secret, we replace it with a random signature
+                index_signatures.push(BlsSignature(self.pk.pop.get_k1()));
+            }
+        }
+
+        index_signatures
+    }
+
+    /// Create signer from a closed registration if initializer was properly registered.
     pub fn create_signer(self, closed_reg: ClosedKeyRegistration) -> Result<Signer, RegisterError> {
-        let index = get_index(&self.pk.vk);
+        let index = Index::from_vk(&self.pk.vk);
         let mut index_found = false;
 
         for (i, rp, _cks) in &closed_reg.registered_parties {

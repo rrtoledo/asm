@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::bls_multi_signature::{
-    BlsProofOfPossession, BlsSigningKey, POP,
+    BlsProofOfPossession, BlsSigningKey, POP, POP_SIZE,
     helper::unsafe_helpers::{p2_add, p2_affine_to_vk, p2_mul, verify_pairing, vk_from_p2_affine},
 };
 use crate::error::{MultiSignatureError, blst_err_to_mithril};
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 /// from the blst library.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BlsVerificationKey(pub BlstVk);
-const BLS_VK_SIZE: usize = 96;
+pub const BLS_VK_SIZE: usize = 96;
 
 impl BlsVerificationKey {
     pub fn size() -> usize {
@@ -173,7 +173,14 @@ pub struct BlsVerificationKeyProofOfPossession {
     pub pop: BlsProofOfPossession,
 }
 
+pub const VK_POP_SIZE: usize = BLS_VK_SIZE + POP_SIZE;
+
 impl BlsVerificationKeyProofOfPossession {
+    /// Size in bytes of a BlsVerificationKeyProofOfPossession
+    pub fn size() -> usize {
+        VK_POP_SIZE
+    }
+
     /// if `e(k1,g2) = e(H_G1("PoP" || mvk),mvk)` and `e(g1,mvk) = e(k2,g2)`
     /// are both true, return 1. The first part is a signature verification
     /// of message "PoP", while the second we need to compute the pairing
