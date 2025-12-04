@@ -1,10 +1,10 @@
 pub(crate) mod unsafe_helpers {
     use blst::{
-        blst_fp12, blst_fp12_finalverify, blst_fp12_mul, blst_p1,
-        blst_p1_add, blst_p1_affine, blst_p1_affine_generator, blst_p1_compress,
-        blst_p1_from_affine, blst_p1_mult, blst_p1_to_affine, blst_p1_uncompress, blst_p2,
-        blst_p2_add, blst_p2_affine, blst_p2_affine_generator, blst_p2_from_affine, blst_p2_mult,
-        blst_p2_to_affine, blst_scalar, blst_sk_to_pk_in_g1,
+        blst_fp12, blst_fp12_finalverify, blst_fp12_mul, blst_p1, blst_p1_add, blst_p1_affine,
+        blst_p1_affine_generator, blst_p1_compress, blst_p1_from_affine, blst_p1_mult,
+        blst_p1_to_affine, blst_p1_uncompress, blst_p2, blst_p2_add, blst_p2_affine,
+        blst_p2_affine_generator, blst_p2_from_affine, blst_p2_mult, blst_p2_to_affine,
+        blst_scalar, blst_sk_to_pk_in_g1,
         min_sig::{PublicKey as BlstVk, SecretKey as BlstSk, Signature as BlstSig},
     };
 
