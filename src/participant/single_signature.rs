@@ -1,15 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
-use blake2::digest::{Digest, FixedOutput};
-
-use serde::{Deserialize, Serialize};
-
-use crate::bls_multi_signature::BlsVerificationKey;
 use crate::bls_multi_signature::helper::unsafe_helpers::verify_double_pairing;
 
 use crate::{
-    AggregateVerificationKey, AsmSignatureError, ClosedKeyRegistration, CoreSignature, Index,
-    VerificationKey, hash_msg,
+    AggregateVerificationKey, AsmSignatureError, CoreSignature, Index, VerificationKey, hash_msg,
 };
 
 /// Signature created by a single party that is registered.

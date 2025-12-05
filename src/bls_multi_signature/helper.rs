@@ -187,8 +187,6 @@ pub(crate) mod unsafe_helpers {
 #[cfg(test)]
 mod tests {
     use super::unsafe_helpers::*;
-    use super::*;
-
     use crate::bls_multi_signature::{
         BlsSigningKey, BlsVerificationKey, BlsVerificationKeyProofOfPossession,
     };
