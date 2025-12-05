@@ -4,7 +4,7 @@ use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::bls_multi_signature::{
-    BlsSignature, BlsSigningKey, BlsVerificationKeyProofOfPossession,
+    BLS_SK_SIZE, BlsSignature, BlsSigningKey, BlsVerificationKeyProofOfPossession, VK_POP_SIZE,
 };
 use crate::{ClosedKeyRegistration, Index, RegisteredParty, Signer, error::RegisterError};
 
@@ -22,6 +22,8 @@ pub struct Initializer {
     pub(crate) pk: VerificationKeyProofOfPossession,
 }
 
+pub const INIT_SIZE: usize = BLS_SK_SIZE + VK_POP_SIZE;
+
 impl Initializer {
     /// Builds an `Initializer` that is ready to register with the key registration service.
     /// This function generates the signing and verification key with a PoP, and initialises the structure.
@@ -29,6 +31,10 @@ impl Initializer {
         let sk = BlsSigningKey::generate(rng);
         let pk = VerificationKeyProofOfPossession::from(&sk);
         Self { sk, pk }
+    }
+
+    pub fn size() -> usize {
+        INIT_SIZE
     }
 
     /// Extract the verification key with proof of possession.
@@ -102,10 +108,10 @@ impl Initializer {
     /// # Layout
     /// * Secret Key
     /// * Public key (including PoP)
-    pub fn to_bytes(&self) -> [u8; 224] {
-        let mut out = [0u8; 224];
-        out[32..32].copy_from_slice(&self.sk.to_bytes());
-        out[32..].copy_from_slice(&self.pk.to_bytes());
+    pub fn to_bytes(&self) -> [u8; INIT_SIZE] {
+        let mut out = [0u8; INIT_SIZE];
+        out[..BLS_SK_SIZE].copy_from_slice(&self.sk.to_bytes());
+        out[BLS_SK_SIZE..].copy_from_slice(&self.pk.to_bytes());
         out
     }
 
@@ -113,12 +119,49 @@ impl Initializer {
     /// # Error
     /// The function fails if the given string of bytes is not of required size.
     pub fn from_bytes(bytes: &[u8]) -> Result<Initializer, RegisterError> {
-        let sk =
-            BlsSigningKey::from_bytes(bytes.get(0..).ok_or(RegisterError::SerializationError)?)?;
+        if bytes.len() != INIT_SIZE {
+            return Err(RegisterError::SerializationError);
+        }
+        let sk = BlsSigningKey::from_bytes(
+            bytes
+                .get(..BLS_SK_SIZE)
+                .ok_or(RegisterError::SerializationError)?,
+        )?;
         let pk = VerificationKeyProofOfPossession::from_bytes(
-            bytes.get(32..).ok_or(RegisterError::SerializationError)?,
+            bytes
+                .get(BLS_SK_SIZE..)
+                .ok_or(RegisterError::SerializationError)?,
         )?;
 
         Ok(Self { sk, pk })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bls_multi_signature::{
+        BlsVerificationKey, helper::unsafe_helpers::vk_from_p2_affine,
+    };
+
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::{SeedableRng};
+
+    #[test]
+    fn test_bytes() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let init1 = Initializer::new(rng);
+        let init1_bytes = init1.to_bytes();
+        let init2 = Initializer::from_bytes(&init1_bytes).unwrap();
+        assert_eq!(init1.pk, init2.pk);
+        assert_eq!(
+            vk_from_p2_affine(&BlsVerificationKey(
+                init2.sk.to_blst_secret_key().sk_to_pk()
+            )),
+            vk_from_p2_affine(&init1.pk.vk)
+        );
     }
 }
