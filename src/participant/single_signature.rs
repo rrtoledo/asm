@@ -23,42 +23,6 @@ pub struct SingleSignature {
 }
 
 impl SingleSignature {
-    // pub fn aggregate(
-    //     self,
-    //     vk: BlsVerificationKey,
-    //     closed_reg: ClosedKeyRegistration,
-    // ) -> Result<Self, AsmSignatureError> {
-    //     let index = Index::from_vk(&vk);
-    //     let ck_opt = closed_reg.get_ck(index);
-
-    //     if let Some(ck) = ck_opt {
-    //         Ok(SingleSignature {
-    //             sigma: self.sigma.add_sig(&ck),
-    //             signer_index: self.signer_index,
-    //         })
-    //     } else {
-    //         Err(AsmSignatureError::NotRegistered)
-    //     }
-    // }
-
-    // pub fn verify_aggregate(
-    //     self,
-    //     vk: BlsVerificationKey,
-    //     closed_reg: ClosedKeyRegistration,
-    // ) -> Result<Self, AsmSignatureError> {
-    //     let index = Index::from_vk(&vk);
-    //     let ck_opt = closed_reg.get_ck(index);
-
-    //     if let Some(ck) = ck_opt {
-    //         Ok(SingleSignature {
-    //             sigma: self.sigma.add_sig(&ck),
-    //             signer_index: self.signer_index,
-    //         })
-    //     } else {
-    //         Err(AsmSignatureError::NotRegistered)
-    //     }
-    // }
-
     /// Verify an ASM signature by checking that the signature verifies on a
     /// message augmented with an aggregate key.
     pub fn verify(
