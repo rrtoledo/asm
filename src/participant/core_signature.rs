@@ -10,7 +10,7 @@ use crate::bls_multi_signature::{
 };
 
 /// BLS Signature on ephemeral keys
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct CoreSignature {
     /// Transcient vk: g_2^r
     pub vk: BlsVerificationKey,
@@ -122,7 +122,10 @@ impl Eq for CoreSignature {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bls_multi_signature::helper::unsafe_helpers::{p1_affine_to_sig, p1_mul, sig_to_p1};
+    use crate::bls_multi_signature::helper::unsafe_helpers::{
+        p1_add, p1_affine_to_sig, p1_mul, p2_add, p2_affine_to_vk, p2_mul, sig_to_p1,
+        vk_from_p2_affine,
+    };
 
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};
@@ -171,10 +174,81 @@ mod tests {
 
         let msg = rng.next_u32().to_le_bytes();
         let cs = CoreSignature::new(&msg, rng);
-        let cs_updated = cs.clone().add_sig(&cs.sig);
+        let cs_updated = cs.add_sig(&cs.sig);
         assert_eq!(cs_updated.vk, cs.vk);
         assert_ne!(cs_updated.sig, cs.sig);
         let p1_pow_2 = p1_mul(&sig_to_p1(&cs.sig.0), &[2u8, 0u8], 16);
         assert_eq!(cs_updated.sig.0, p1_affine_to_sig(&p1_pow_2));
+    }
+
+    #[test]
+    fn test_add() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let msg1 = rng.next_u32().to_le_bytes();
+        let cs1a = CoreSignature::new(&msg1, rng);
+
+        // Adding different signature on same message
+        let cs1b = CoreSignature::new(&msg1, rng);
+        assert_ne!(cs1a, cs1b);
+        assert!(cs1a.verify(&msg1).is_ok());
+        assert!(cs1b.verify(&msg1).is_ok());
+        let cs1 = cs1a.add_unsafe(&cs1b);
+        assert_ne!(cs1, cs1a);
+        assert_ne!(cs1, cs1b);
+        assert!(cs1.verify(&msg1).is_ok());
+
+        let added_sig1 = p1_add(&sig_to_p1(&cs1a.sig.0), &sig_to_p1(&cs1b.sig.0));
+        assert_eq!(cs1.sig.0, p1_affine_to_sig(&added_sig1));
+        let added_vk1 = p2_add(&vk_from_p2_affine(&cs1a.vk), &vk_from_p2_affine(&cs1b.vk));
+        assert_eq!(cs1.vk.0, p2_affine_to_vk(&added_vk1));
+
+        // Adding same signature
+        let cs1 = cs1a.add_unsafe(&cs1a);
+        assert_ne!(cs1, cs1a);
+        assert!(cs1.verify(&msg1).is_ok());
+        let sig_pow_2 = p1_mul(&sig_to_p1(&cs1a.sig.0), &[2u8, 0u8], 16);
+        let vk_pow_2 = p2_mul(&vk_from_p2_affine(&cs1a.vk), &[2u8, 0u8], 16);
+        assert_eq!(cs1.sig.0, p1_affine_to_sig(&sig_pow_2));
+        assert_eq!(cs1.vk.0, p2_affine_to_vk(&vk_pow_2));
+
+        // Adding signatures on different messages
+        let msg2 = rng.next_u32().to_le_bytes();
+        let cs2 = CoreSignature::new(&msg2, rng);
+        assert!(cs2.verify(&msg2).is_ok());
+        let cs = cs1.add_unsafe(&cs2);
+        assert!(cs.verify(&msg1).is_err());
+        assert!(cs.verify(&msg2).is_err());
+    }
+
+    #[test]
+    fn test_mul() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let msg = rng.next_u32().to_le_bytes();
+        let cs = CoreSignature::new(&msg, rng);
+        assert!(cs.verify(&msg).is_ok());
+        let random = [rng.next_u32().to_be_bytes()[0], 0u8];
+        let cs_2 = cs.multiply(&random);
+        assert!(cs_2.verify(&msg).is_ok());
+
+        // Checking with multiplication
+        let sig_pow = p1_mul(&sig_to_p1(&cs.sig.0), &random, 16);
+        let vk_pow = p2_mul(&vk_from_p2_affine(&cs.vk), &random, 16);
+        assert_eq!(cs_2.sig.0, p1_affine_to_sig(&sig_pow));
+        assert_eq!(cs_2.vk.0, p2_affine_to_vk(&vk_pow));
+
+        // Checking with addition
+        let mut cs_add = cs.add_unsafe(&cs);
+        for _ in 0..(random[0] as usize - 2) {
+            cs_add = cs_add.add_unsafe(&cs);
+        }
+        assert!(cs_add.verify(&msg).is_ok());
+        assert_eq!(cs_add.sig.0, cs_2.sig.0);
+        assert_eq!(cs_add.vk.0, cs_2.vk.0);
     }
 }

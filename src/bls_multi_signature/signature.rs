@@ -87,7 +87,7 @@ impl BlsSignature {
     pub fn mul(&self, scalar: &[u8]) -> BlsSignature {
         let p = sig_to_p1(&self.0);
 
-        BlsSignature(p1_affine_to_sig(&p1_mul(&p, scalar, scalar.len())))
+        BlsSignature(p1_affine_to_sig(&p1_mul(&p, scalar, 8 * scalar.len())))
     }
 
     /// Aggregate a slice of Signatures by multiplying them together

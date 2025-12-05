@@ -75,8 +75,7 @@ impl BlsVerificationKey {
 
     pub fn mul(&self, scalar: &[u8]) -> BlsVerificationKey {
         let p = vk_from_p2_affine(&self);
-
-        BlsVerificationKey(p2_affine_to_vk(&p2_mul(&p, scalar, scalar.len())))
+        BlsVerificationKey(p2_affine_to_vk(&p2_mul(&p, scalar, 8 * scalar.len())))
     }
 
     /// Aggregate a slice of verification keys by multiplying them together
