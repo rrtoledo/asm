@@ -2,10 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
 use crate::bls_multi_signature::helper::unsafe_helpers::verify_double_pairing;
-
-use crate::{
-    AggregateVerificationKey, AsmSignatureError, CoreSignature, Index, VerificationKey, hash_msg,
-};
+use crate::utils::hash_msg;
+use crate::{AggregateVerificationKey, AsmSignatureError, CoreSignature, Index, VerificationKey};
 
 /// Signature created by a single party that is registered.
 /// The underlying core signature has been udpated with the membership key.

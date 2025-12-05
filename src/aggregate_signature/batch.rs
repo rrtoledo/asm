@@ -4,11 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::bls_multi_signature::{BlsSignature, helper::unsafe_helpers::verify_double_pairing};
 use crate::error::BatchedAsmAggregateSignatureError;
-use crate::{
-    AggregateSignature, ClosedKeyRegistration, CoreSignature, Index, has_duplicates, hash_msg,
-};
-
-use super::utils::compute_hash_index;
+use crate::utils::{compute_hash_index, has_duplicates, hash_msg};
+use crate::{AggregateSignature, ClosedKeyRegistration, CoreSignature, Index};
 
 /// `AggregateSignature` uses the "concatenation" proving system (as described in Section 4.3 of the original paper.)
 /// This means that the aggregated signature contains a vector with all individual signatures.

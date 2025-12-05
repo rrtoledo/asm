@@ -78,7 +78,7 @@ impl Initializer {
             return Err(RegisterError::UnregisteredInitializer);
         }
 
-        Ok(Signer::set_signer(self.sk, self.pk.vk, closed_reg))
+        Signer::set_signer(self.sk, self.pk.vk, closed_reg)
     }
 
     /// Creates a new basic signer that does not include closed registration.

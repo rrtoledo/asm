@@ -5,12 +5,11 @@ use crate::bls_multi_signature::{
     BlsVerificationKey, helper::unsafe_helpers::verify_double_pairing,
 };
 use crate::error::CoreSignatureError;
+use crate::utils::{compute_hash_index, hash_msg};
 use crate::{
     AggregateVerificationKey, AsmAggregateSignatureError, CS_SIZE, ClosedKeyRegistration,
-    CoreSignature, INDEX_SIZE, Index, SingleSignature, hash_msg,
+    CoreSignature, INDEX_SIZE, Index, SingleSignature,
 };
-
-use super::utils::compute_hash_index;
 
 /// `AggregateSignature` aggregate several SingleSignatures into a
 /// CoreSignature and vector of signers.

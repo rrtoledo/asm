@@ -1,12 +1,9 @@
 mod aggregate_key;
 mod batch;
-mod clerk;
 mod signature;
-mod utils;
 
 pub use aggregate_key::*;
 pub use batch::*;
-pub use clerk::*;
 pub use signature::*;
 
 // #[cfg(test)]
