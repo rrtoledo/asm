@@ -13,7 +13,7 @@ use crate::{
 
 /// `AggregateSignature` aggregate several SingleSignatures into a
 /// CoreSignature and vector of signers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AggregateSignature {
     pub signature: CoreSignature,
     pub signers: Vec<Index>,
@@ -23,7 +23,7 @@ impl AggregateSignature {
     // Aggregate several SingleSignatures on the same message if there os no
     // duplicate signers, the signatures verify and their corresponding vk was
     // registered.
-    pub fn aggregate_signatures(
+    pub fn new(
         extended_signatures: Vec<(SingleSignature, BlsVerificationKey)>,
         msg: &[u8],
         closed_reg: &ClosedKeyRegistration,
@@ -50,7 +50,9 @@ impl AggregateSignature {
                     vk_hashset.insert(sig.signer_index);
 
                     // Verify Single signature (Core signature and signer index are correct)
-                    sig.verify(&vk, msg, avk)?;
+                    if sig.verify(&vk, msg, avk).is_err() {
+                        return Err(AsmAggregateSignatureError::BatchInvalid);
+                    }
 
                     signature = if let Some(acc_sig) = signature {
                         let updated_signature = acc_sig.add_unsafe(&sig.sigma);
@@ -173,6 +175,7 @@ impl AggregateSignature {
         }
 
         let hashed_indices = compute_hash_index(&self.signers);
+        let expanded_msg = [msg, &avk.0.to_bytes()].concat();
 
         // Verify aggregate signature
         if !verify_double_pairing(
@@ -180,7 +183,7 @@ impl AggregateSignature {
             &self.signature.sig.0,
             &self.signature.vk,
             &hashed_indices.0,
-            &hash_msg(msg).0,
+            &hash_msg(&expanded_msg).0,
         ) {
             return Err(AsmAggregateSignatureError::BatchInvalid);
         }
@@ -225,5 +228,353 @@ impl AggregateSignature {
         }
 
         Ok(AggregateSignature { signature, signers })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ClosedKeyRegistration, Initializer, KeyRegistration, Signer};
+
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::{CryptoRng, RngCore, SeedableRng};
+
+    fn prepare_signers<R: RngCore + CryptoRng>(
+        nb_signers: usize,
+        rng: &mut R,
+    ) -> (ClosedKeyRegistration, Vec<Signer>) {
+        let mut key_reg = KeyRegistration::init();
+
+        let mut inits = Vec::with_capacity(nb_signers);
+        for _ in 0..nb_signers {
+            let init = Initializer::new(rng);
+            let mks = init.prepare_registration();
+
+            let registered =
+                key_reg.register(init.get_verification_key_proof_of_possession(), &mks);
+            assert!(registered.is_ok());
+            inits.push(init);
+        }
+
+        let is_closed = key_reg.close();
+        assert!(is_closed.is_ok());
+        let registry = is_closed.unwrap();
+
+        let signers: Vec<Signer> = inits
+            .iter()
+            .map(|init| {
+                let is_signed = init.clone().create_signer(registry.clone());
+                assert!(is_signed.is_ok());
+                is_signed.unwrap()
+            })
+            .collect();
+
+        (registry, signers)
+    }
+
+    #[test]
+    fn test_verify() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 2;
+
+        let (registry, signers_immu) = prepare_signers(nb_signers, rng);
+        let mut signers = signers_immu.clone();
+        let signer1 = signers.pop().unwrap();
+        let signer2 = signers.pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+        let sig1 = signer1.sign(&msg, rng).unwrap();
+        let sig2 = signer2.sign(&msg, rng).unwrap();
+        let extended_signatures = [
+            (sig1, signer1.get_verification_key()),
+            (sig2, signer2.get_verification_key()),
+        ];
+
+        let is_aggregated = AggregateSignature::new(extended_signatures.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig = is_aggregated.unwrap();
+
+        assert!(agg_sig.verify(&msg, registry.aggregate_key).is_ok());
+    }
+
+    #[test]
+    fn test_update_positive() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 4;
+
+        let (registry, signers_immu) = prepare_signers(nb_signers, rng);
+        let mut signers = signers_immu.clone();
+        let signer1 = signers.pop().unwrap();
+        let signer2 = signers.pop().unwrap();
+        let signer3 = signers.pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+        let sig1 = signer1.sign(&msg, rng).unwrap();
+        let sig2 = signer2.sign(&msg, rng).unwrap();
+        let extended_signatures = [
+            (sig1, signer1.get_verification_key()),
+            (sig2, signer2.get_verification_key()),
+        ];
+
+        let is_aggregated = AggregateSignature::new(extended_signatures.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig = is_aggregated.unwrap();
+
+        assert!(agg_sig.verify(&msg, registry.aggregate_key).is_ok());
+
+        let sig3 = signer3.sign(&msg, rng).unwrap();
+        let other_sigs = [(sig3, signer3.get_verification_key())];
+
+        let is_updated = agg_sig.update_aggregate(other_sigs.to_vec(), &msg, &registry);
+        assert!(is_updated.is_ok());
+        let agg_sig = is_updated.unwrap();
+
+        assert!(agg_sig.verify(&msg, registry.aggregate_key).is_ok());
+    }
+
+    #[test]
+    fn test_update_negative_msg() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 4;
+
+        let (registry, signers_immu) = prepare_signers(nb_signers, rng);
+        let mut signers = signers_immu.clone();
+        let signer1 = signers.pop().unwrap();
+        let signer2 = signers.pop().unwrap();
+        let signer3 = signers.pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+        let sig1 = signer1.sign(&msg, rng).unwrap();
+        let sig2 = signer2.sign(&msg, rng).unwrap();
+        let extended_signatures = [
+            (sig1, signer1.get_verification_key()),
+            (sig2, signer2.get_verification_key()),
+        ];
+
+        let is_aggregated = AggregateSignature::new(extended_signatures.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig = is_aggregated.unwrap();
+
+        assert!(agg_sig.verify(&msg, registry.aggregate_key).is_ok());
+
+        let msg = rng.next_u32().to_be_bytes();
+        let sig3 = signer3.sign(&msg, rng).unwrap();
+        let other_sigs = [(sig3, signer3.get_verification_key())];
+
+        let is_updated = agg_sig.update_aggregate(other_sigs.to_vec(), &msg, &registry);
+        assert!(is_updated.is_ok());
+        let agg_sig = is_updated.unwrap();
+
+        assert!(agg_sig.verify(&msg, registry.aggregate_key).is_err());
+    }
+
+    #[test]
+    fn test_update_negative_sig() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 4;
+
+        let (registry, signers_immu) = prepare_signers(nb_signers, rng);
+        let mut signers = signers_immu.clone();
+        let signer1 = signers.pop().unwrap();
+        let signer2 = signers.pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+        let sig1 = signer1.sign(&msg, rng).unwrap();
+        let sig2 = signer2.sign(&msg, rng).unwrap();
+        let extended_signatures = [
+            (sig1, signer1.get_verification_key()),
+            (sig2, signer2.get_verification_key()),
+        ];
+
+        let is_aggregated = AggregateSignature::new(extended_signatures.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig = is_aggregated.unwrap();
+
+        assert!(agg_sig.verify(&msg, registry.aggregate_key).is_ok());
+
+        let msg = rng.next_u32().to_be_bytes();
+        let sig3 = signer2.sign(&msg, rng).unwrap();
+        let other_sigs = [(sig3, signer2.get_verification_key())];
+
+        let is_updated = agg_sig.update_aggregate(other_sigs.to_vec(), &msg, &registry);
+        assert!(is_updated.is_err());
+    }
+
+    #[test]
+    fn test_merge_positive() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 4;
+
+        let (registry, signers_immu) = prepare_signers(nb_signers, rng);
+        let mut signers = signers_immu.clone();
+        let signer1 = signers.pop().unwrap();
+        let signer2 = signers.pop().unwrap();
+        let signer3 = signers.pop().unwrap();
+        let signer4 = signers.pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+
+        let sig1 = signer1.sign(&msg, rng).unwrap();
+        let sig2 = signer2.sign(&msg, rng).unwrap();
+        let extended_signatures = [
+            (sig1, signer1.get_verification_key()),
+            (sig2, signer2.get_verification_key()),
+        ];
+        let is_aggregated = AggregateSignature::new(extended_signatures.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig1 = is_aggregated.unwrap();
+        assert!(agg_sig1.verify(&msg, registry.aggregate_key).is_ok());
+
+        let sig3 = signer3.sign(&msg, rng).unwrap();
+        let sig4 = signer4.sign(&msg, rng).unwrap();
+        let other_sigs = [
+            (sig3, signer3.get_verification_key()),
+            (sig4, signer4.get_verification_key()),
+        ];
+        let is_aggregated = AggregateSignature::new(other_sigs.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig2 = is_aggregated.unwrap();
+
+        let is_merged = agg_sig1.merge_aggregates([agg_sig2].to_vec(), &msg, &registry);
+        assert!(is_merged.is_ok());
+        let agg_sig = is_merged.unwrap();
+
+        assert!(agg_sig.verify(&msg, registry.aggregate_key).is_ok());
+    }
+
+    #[test]
+    fn test_merge_negative_msg() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 4;
+
+        let (registry, signers_immu) = prepare_signers(nb_signers, rng);
+        let mut signers = signers_immu.clone();
+        let signer1 = signers.pop().unwrap();
+        let signer2 = signers.pop().unwrap();
+        let signer3 = signers.pop().unwrap();
+        let signer4 = signers.pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+
+        let sig1 = signer1.sign(&msg, rng).unwrap();
+        let sig2 = signer2.sign(&msg, rng).unwrap();
+        let extended_signatures = [
+            (sig1, signer1.get_verification_key()),
+            (sig2, signer2.get_verification_key()),
+        ];
+        let is_aggregated = AggregateSignature::new(extended_signatures.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig1 = is_aggregated.unwrap();
+        assert!(agg_sig1.verify(&msg, registry.aggregate_key).is_ok());
+
+        let msg = rng.next_u32().to_be_bytes();
+
+        let sig3 = signer3.sign(&msg, rng).unwrap();
+        let sig4 = signer4.sign(&msg, rng).unwrap();
+        let other_sigs = [
+            (sig3, signer3.get_verification_key()),
+            (sig4, signer4.get_verification_key()),
+        ];
+        let is_aggregated = AggregateSignature::new(other_sigs.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig2 = is_aggregated.unwrap();
+
+        let is_merged = agg_sig1.merge_aggregates([agg_sig2].to_vec(), &msg, &registry);
+        assert!(is_merged.is_ok());
+        let agg_sig = is_merged.unwrap();
+
+        assert!(agg_sig.verify(&msg, registry.aggregate_key).is_err());
+    }
+
+    #[test]
+    fn test_merge_negative_sig() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 4;
+
+        let (registry, signers_immu) = prepare_signers(nb_signers, rng);
+        let mut signers = signers_immu.clone();
+        let signer1 = signers.pop().unwrap();
+        let signer2 = signers.pop().unwrap();
+        let signer3 = signers.pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+
+        let sig1 = signer1.sign(&msg, rng).unwrap();
+        let sig2 = signer2.sign(&msg, rng).unwrap();
+        let extended_signatures = [
+            (sig1, signer1.get_verification_key()),
+            (sig2, signer2.get_verification_key()),
+        ];
+        let is_aggregated = AggregateSignature::new(extended_signatures.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig1 = is_aggregated.unwrap();
+        assert!(agg_sig1.verify(&msg, registry.aggregate_key).is_ok());
+
+        let msg = rng.next_u32().to_be_bytes();
+
+        let sig3 = signer3.sign(&msg, rng).unwrap();
+        let sig4 = signer2.sign(&msg, rng).unwrap();
+        let other_sigs = [
+            (sig3, signer3.get_verification_key()),
+            (sig4, signer2.get_verification_key()),
+        ];
+        let is_aggregated = AggregateSignature::new(other_sigs.to_vec(), &msg, &registry);
+        assert!(is_aggregated.is_ok());
+        let agg_sig2 = is_aggregated.unwrap();
+
+        let is_merged = agg_sig1.merge_aggregates([agg_sig2].to_vec(), &msg, &registry);
+        assert!(is_merged.is_err());
+    }
+
+    #[test]
+    fn test_bytes() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 2;
+
+        let (registry, signers_immu) = prepare_signers(nb_signers, rng);
+        let mut signers = signers_immu.clone();
+        let signer1 = signers.pop().unwrap();
+        let signer2 = signers.pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+        let sig1 = signer1.sign(&msg, rng).unwrap();
+        let sig2 = signer2.sign(&msg, rng).unwrap();
+        let extended_signatures = [
+            (sig1, signer1.get_verification_key()),
+            (sig2, signer2.get_verification_key()),
+        ];
+
+        let agg_sig =
+            AggregateSignature::new(extended_signatures.to_vec(), &msg, &registry).unwrap();
+
+        let agg_sig_bytes = agg_sig.to_bytes();
+        assert_eq!(
+            agg_sig,
+            AggregateSignature::from_bytes(&agg_sig_bytes).unwrap()
+        );
     }
 }
