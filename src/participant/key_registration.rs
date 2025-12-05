@@ -1,17 +1,15 @@
 //! Key registration functionality.
 use std::collections::{HashMap, hash_map::Entry};
 
-use crate::bls_multi_signature::{
-    BlsSignature, BlsVerificationKey, BlsVerificationKeyProofOfPossession,
-};
+use crate::bls_multi_signature::{BlsSignature, BlsVerificationKeyProofOfPossession};
 use crate::error::RegisterError;
-use crate::{AggregateVerificationKey, Index};
+use crate::{AggregateVerificationKey, Index, VerificationKey};
 use serde::{Deserialize, Serialize};
 
 /// Stores a registered party with its public key and the associated stake.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisteredParty {
-    pub pk: BlsVerificationKey,
+    pub pk: VerificationKey,
     pub mks: Vec<BlsSignature>,
 }
 
@@ -69,16 +67,16 @@ impl KeyRegistration {
     /// Finalize the key registration.
     /// This function disables `KeyReg::register`, consumes the instance of `self`, and returns a `ClosedKeyRegistration`.
     pub fn close(self) -> Result<ClosedKeyRegistration, RegisterError> {
-        let mut avk: Option<BlsVerificationKey> = None;
+        let mut avk: Option<AggregateVerificationKey> = None;
         let mut cks: Vec<Option<BlsSignature>> = (0..Index::max()).map(|_| None).collect();
         let mut registered_parties = Vec::new();
 
         // Computing avk and the cks
         for (&index, reg) in &self.keys {
             if avk.is_none() {
-                avk = Some(reg.pk);
+                avk = Some(AggregateVerificationKey(reg.pk));
             } else {
-                avk = Some(BlsVerificationKey::add(&avk.unwrap(), &reg.pk));
+                avk = Some(AggregateVerificationKey(avk.unwrap().0.add(&reg.pk)));
             }
 
             for i in 0..(Index::max() as usize) {
@@ -100,7 +98,7 @@ impl KeyRegistration {
         if avk.is_some() {
             Ok(ClosedKeyRegistration {
                 registered_parties,
-                aggregate_key: AggregateVerificationKey(avk.unwrap()),
+                aggregate_key: avk.unwrap(),
             })
         } else {
             Err(RegisterError::GenericRegistrationError)
@@ -128,7 +126,7 @@ impl ClosedKeyRegistration {
         false
     }
 
-    pub fn get_vk(&self, index: Index) -> Option<BlsVerificationKey> {
+    pub fn get_vk(&self, index: Index) -> Option<VerificationKey> {
         for (i, p, _ck) in &self.registered_parties {
             if index == *i {
                 return Some(p.pk);
@@ -145,7 +143,7 @@ impl ClosedKeyRegistration {
         }
         None
     }
-    pub fn get_keys(&self, index: Index) -> Option<(BlsVerificationKey, BlsSignature)> {
+    pub fn get_keys(&self, index: Index) -> Option<(VerificationKey, BlsSignature)> {
         for (i, p, ck) in &self.registered_parties {
             if index == *i {
                 return Some((p.pk, *ck));
@@ -154,70 +152,3 @@ impl ClosedKeyRegistration {
         None
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use blake2::{Blake2b, digest::consts::U32};
-//     use proptest::{collection::vec, prelude::*};
-//     use rand_chacha::ChaCha20Rng;
-//     use rand_core::SeedableRng;
-
-//     use crate::bls_multi_signature::BlsSigningKey;
-
-//     use super::*;
-
-//     proptest! {
-//         #[test]
-//         fn test_keyreg(stake in vec(1..1u64 << 60, 2..=10),
-//                        nkeys in 2..10_usize,
-//                        fake_it in 0..4usize,
-//                        seed in any::<[u8;32]>()) {
-//             let mut rng = ChaCha20Rng::from_seed(seed);
-//             let mut kr = KeyRegistration::init();
-
-//             let gen_keys = (1..nkeys).map(|_| {
-//                 let sk = BlsSigningKey::generate(&mut rng);
-//                 BlsVerificationKeyProofOfPossession::from(&sk)
-//             }).collect::<Vec<_>>();
-
-//             let fake_key = {
-//                 let sk = BlsSigningKey::generate(&mut rng);
-//                 BlsVerificationKeyProofOfPossession::from(&sk)
-//             };
-
-//             // Record successful registrations
-//             let mut keys = HashMap::new();
-
-//             for (i, &stake) in stake.iter().enumerate() {
-//                 let mut pk = gen_keys[i % gen_keys.len()];
-
-//                 if fake_it == 0 {
-//                     pk.pop = fake_key.pop;
-//                 }
-
-//                 let reg = kr.register(stake, pk);
-//                 match reg {
-//                     Ok(_) => {
-//                         assert!(keys.insert(pk.vk, stake).is_none());
-//                     },
-//                     Err(RegisterError::KeyRegistered(pk1)) => {
-//                         assert!(pk1.as_ref() == &pk.vk);
-//                         assert!(keys.contains_key(&pk.vk));
-//                     }
-//                     Err(RegisterError::KeyInvalid(a)) => {
-//                         assert_eq!(fake_it, 0);
-//                         assert!(a.verify_proof_of_possesion().is_err());
-//                     }
-//                     Err(RegisterError::SerializationError) => unreachable!(),
-//                     _ => unreachable!(),
-//                 }
-//             }
-
-//             if !kr.keys.is_empty() {
-//                 let closed = kr.close::<Blake2b<U32>>();
-//                 let retrieved_keys = closed.reg_parties.iter().map(|r| (r.0, r.1)).collect::<HashMap<_,_>>();
-//                 assert!(retrieved_keys == keys);
-//             }
-//         }
-//     }
-// }
