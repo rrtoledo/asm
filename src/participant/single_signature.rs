@@ -116,7 +116,7 @@ impl Eq for SingleSignature {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Initializer, KeyRegistration, Signer};
+    use crate::{ClosedKeyRegistration, Initializer, KeyRegistration, Signer};
 
     use rand_chacha::ChaCha20Rng;
     use rand_core::{CryptoRng, RngCore, SeedableRng};
