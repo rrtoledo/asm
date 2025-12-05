@@ -161,26 +161,15 @@ pub(crate) mod unsafe_helpers {
         }
     }
 
-    pub(crate) fn fr_one() -> BlstSk {
-        let mut vec_one = Vec::with_capacity(255);
+    pub(crate) fn fr_u8(i: u8) -> BlstSk {
+        let mut vec = Vec::with_capacity(255);
 
         for _ in 0..31 {
-            vec_one.push(0u8);
+            vec.push(0u8);
         }
-        vec_one.push(1u8);
+        vec.push(i);
 
-        BlstSk::from_bytes(&vec_one).unwrap()
-    }
-
-    pub(crate) fn fr_two() -> BlstSk {
-        let mut vec_two: Vec<u8> = Vec::with_capacity(255);
-
-        for _ in 0..31 {
-            vec_two.push(0u8);
-        }
-        vec_two.push(2u8);
-
-        BlstSk::from_bytes(&vec_two).unwrap()
+        BlstSk::from_bytes(&vec).unwrap()
     }
 }
 
@@ -196,8 +185,8 @@ mod tests {
 
     #[test]
     fn test_g1_one() {
-        let one = fr_one();
-        let two = fr_two();
+        let one = fr_u8(1);
+        let two = fr_u8(2);
 
         // Generating random point on G1
         let p1 = sig_to_p1(&one.sign(&[42], &[], &[]));
@@ -219,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_g1_mul() {
-        let one = fr_one();
+        let one = fr_u8(1);
 
         // Generating random point on G1
         let p1 = sig_to_p1(&one.sign(&[42], &[], &[]));
@@ -266,7 +255,7 @@ mod tests {
         let msg_1 = rng.next_u32().to_be_bytes();
         let msg_2 = rng.next_u32().to_be_bytes();
 
-        let one = fr_one();
+        let one = fr_u8(1);
         let p1 = sig_to_p1(&one.sign(&msg_1, &[], &[]));
         let p2 = sig_to_p1(&one.sign(&msg_2, &[], &[]));
 

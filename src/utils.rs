@@ -1,5 +1,5 @@
 use crate::Index;
-use crate::bls_multi_signature::{BlsSignature, helper::unsafe_helpers::fr_one};
+use crate::bls_multi_signature::{BlsSignature, helper::unsafe_helpers::fr_u8};
 
 use std::collections::HashSet;
 
@@ -31,7 +31,7 @@ pub(crate) fn has_duplicates<T: Eq + std::hash::Hash>(v: &[T]) -> bool {
 
 /// Compute H1(msg) as H1(msg)^1
 pub fn hash_msg(msg: &[u8]) -> BlsSignature {
-    let blst_one = fr_one();
+    let blst_one = fr_u8(1);
     let sig = blst_one.sign(msg, &[], &[]);
 
     BlsSignature(sig)
