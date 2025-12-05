@@ -1,4 +1,4 @@
-//! Mithril-stm participant including Initializer and Signer
+//! ASM
 
 mod core_signature;
 mod index;

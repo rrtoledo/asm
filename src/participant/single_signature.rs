@@ -4,10 +4,12 @@ use blake2::digest::{Digest, FixedOutput};
 
 use serde::{Deserialize, Serialize};
 
+use crate::bls_multi_signature::BlsVerificationKey;
 use crate::bls_multi_signature::helper::unsafe_helpers::verify_double_pairing;
 
 use crate::{
-    AggregateVerificationKey, AsmSignatureError, CoreSignature, Index, VerificationKey, hash_msg,
+    AggregateVerificationKey, AsmSignatureError, ClosedKeyRegistration, CoreSignature, Index,
+    VerificationKey, hash_msg,
 };
 
 /// Signature created by a single party that is registered.
@@ -21,6 +23,42 @@ pub struct SingleSignature {
 }
 
 impl SingleSignature {
+    // pub fn aggregate(
+    //     self,
+    //     vk: BlsVerificationKey,
+    //     closed_reg: ClosedKeyRegistration,
+    // ) -> Result<Self, AsmSignatureError> {
+    //     let index = Index::from_vk(&vk);
+    //     let ck_opt = closed_reg.get_ck(index);
+
+    //     if let Some(ck) = ck_opt {
+    //         Ok(SingleSignature {
+    //             sigma: self.sigma.add_sig(&ck),
+    //             signer_index: self.signer_index,
+    //         })
+    //     } else {
+    //         Err(AsmSignatureError::NotRegistered)
+    //     }
+    // }
+
+    // pub fn verify_aggregate(
+    //     self,
+    //     vk: BlsVerificationKey,
+    //     closed_reg: ClosedKeyRegistration,
+    // ) -> Result<Self, AsmSignatureError> {
+    //     let index = Index::from_vk(&vk);
+    //     let ck_opt = closed_reg.get_ck(index);
+
+    //     if let Some(ck) = ck_opt {
+    //         Ok(SingleSignature {
+    //             sigma: self.sigma.add_sig(&ck),
+    //             signer_index: self.signer_index,
+    //         })
+    //     } else {
+    //         Err(AsmSignatureError::NotRegistered)
+    //     }
+    // }
+
     /// Verify an ASM signature by checking that the signature verifies on a
     /// message augmented with an aggregate key.
     pub fn verify(
@@ -31,7 +69,7 @@ impl SingleSignature {
     ) -> Result<(), AsmSignatureError> {
         // Verify signature on augmented message
         let augmented_message: Vec<u8> = [msg, &avk.0.to_bytes()].concat();
-        self.basic_verify(pk, &augmented_message)?;
+        self.basic_verify(pk, &augmented_message, avk)?;
         Ok(())
     }
 
@@ -41,21 +79,24 @@ impl SingleSignature {
         &self,
         pk: &VerificationKey,
         msg: &[u8],
+        avk: AggregateVerificationKey,
     ) -> Result<(), AsmSignatureError> {
         // Verify signer's index is correct
         let index = Index::from_vk(pk);
         if index != self.signer_index {
+            println!(" wrong index");
             return Err(AsmSignatureError::SignatureIndexInvalid);
         }
 
         // Verifying that the core signature with membership key verifiees
         if !verify_double_pairing(
-            pk,
+            &avk.0,
             &self.sigma.sig.0,
             &self.sigma.vk,
             &index.hash_to_g1().0,
             &hash_msg(msg).0,
         ) {
+            println!(" wrong pairing");
             return Err(AsmSignatureError::SignatureInvalid);
         }
 
@@ -81,9 +122,7 @@ impl SingleSignature {
     }
 
     /// Extract a batch compatible `SingleSignature` from a byte slice.
-    pub fn from_bytes<D: Clone + Digest + FixedOutput>(
-        bytes: &[u8],
-    ) -> Result<SingleSignature, AsmSignatureError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<SingleSignature, AsmSignatureError> {
         let signer_index = Index::from_bytes(&[bytes[0]]);
         if signer_index.is_err() {
             return Err(AsmSignatureError::SerializationError);
@@ -114,3 +153,86 @@ impl PartialEq for SingleSignature {
 }
 
 impl Eq for SingleSignature {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Initializer, KeyRegistration, Signer};
+
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::{CryptoRng, RngCore, SeedableRng};
+
+    fn prepare_signers<R: RngCore + CryptoRng>(
+        nb_signers: usize,
+        rng: &mut R,
+    ) -> (ClosedKeyRegistration, Vec<Signer>) {
+        let mut key_reg = KeyRegistration::init();
+
+        let mut inits = Vec::with_capacity(nb_signers);
+        for _ in 0..nb_signers {
+            let init = Initializer::new(rng);
+            let mks = init.prepare_registration();
+
+            let registered =
+                key_reg.register(init.get_verification_key_proof_of_possession(), &mks);
+            assert!(registered.is_ok());
+            inits.push(init);
+        }
+
+        let is_closed = key_reg.close();
+        assert!(is_closed.is_ok());
+        let registry = is_closed.unwrap();
+
+        let signers: Vec<Signer> = inits
+            .iter()
+            .map(|init| {
+                let is_signed = init.clone().create_signer(registry.clone());
+                assert!(is_signed.is_ok());
+                is_signed.unwrap()
+            })
+            .collect();
+
+        (registry, signers)
+    }
+
+    #[test]
+    fn test_verify() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 2;
+
+        let (registry, signers) = prepare_signers(nb_signers, rng);
+        let avk = registry.aggregate_key;
+        let signer = signers.clone().pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+        let signing = signer.sign(&msg, rng);
+        assert!(signing.is_ok());
+        let sig = signing.unwrap();
+        assert!(
+            sig.verify(&signer.get_verification_key(), &msg, avk)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_bytes() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let nb_signers = 2;
+        let (_registry, signers) = prepare_signers(nb_signers, rng);
+        let signer = signers.clone().pop().unwrap();
+
+        let msg = rng.next_u32().to_be_bytes();
+        let signing = signer.sign(&msg, rng);
+        assert!(signing.is_ok());
+        let sig = signing.unwrap();
+
+        let sig_bytes = sig.to_bytes();
+        assert_eq!(sig, SingleSignature::from_bytes(&sig_bytes).unwrap());
+    }
+}

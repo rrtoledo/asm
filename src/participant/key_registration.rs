@@ -47,14 +47,12 @@ impl KeyRegistration {
             pk.verify_proof_of_possesion()?;
 
             for (i, mk) in mks.iter().enumerate() {
-                if i != index.to_usize() {
-                    if mk.verify(&i.to_be_bytes(), &pk.vk).is_err() {
-                        return Err(RegisterError::InvalidMembershipKey);
-                    }
-                } else {
-                    if mk.verify(&i.to_be_bytes(), &pk.vk).is_ok() {
-                        return Err(RegisterError::AggregationSecretRevealed);
-                    }
+                let res = mk.verify(&Index::from_usize(i).augmented_index(), &pk.vk);
+                if i != index.to_usize() && res.is_err() {
+                    return Err(RegisterError::InvalidMembershipKey);
+                }
+                if i == index.to_usize() && res.is_ok() {
+                    return Err(RegisterError::AggregationSecretRevealed);
                 }
             }
 

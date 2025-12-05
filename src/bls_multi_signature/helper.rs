@@ -163,22 +163,22 @@ pub(crate) mod unsafe_helpers {
 
     pub(crate) fn fr_one() -> BlstSk {
         let mut vec_one = Vec::with_capacity(255);
-        vec_one.push(1u8);
 
         for _ in 0..31 {
             vec_one.push(0u8);
         }
+        vec_one.push(1u8);
 
         BlstSk::from_bytes(&vec_one).unwrap()
     }
 
     pub(crate) fn fr_two() -> BlstSk {
         let mut vec_two: Vec<u8> = Vec::with_capacity(255);
-        vec_two.push(2u8);
 
         for _ in 0..31 {
             vec_two.push(0u8);
         }
+        vec_two.push(2u8);
 
         BlstSk::from_bytes(&vec_two).unwrap()
     }
@@ -187,6 +187,14 @@ pub(crate) mod unsafe_helpers {
 #[cfg(test)]
 mod tests {
     use super::unsafe_helpers::*;
+    use super::*;
+
+    use crate::bls_multi_signature::{
+        BlsSigningKey, BlsVerificationKey, BlsVerificationKeyProofOfPossession,
+    };
+
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::{RngCore, SeedableRng};
 
     #[test]
     fn test_g1_one() {
@@ -236,5 +244,52 @@ mod tests {
         // If we are multiplying by 1, the values should be the same
         // p.s. we are checking in Affine coordinates as we have no guarantees that the projective Z coordinate would be the same.
         assert!(p1_affine_to_sig(&p1_mul) == p1_affine_to_sig(&p1_added));
+    }
+
+    #[test]
+    fn test_pairing() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let sk = BlsSigningKey::generate(rng);
+        let vkpop = BlsVerificationKeyProofOfPossession::from(&sk);
+
+        // e(g1,mvk) = e(k2,g2)
+        assert!(verify_pairing(&vkpop.vk, &vkpop.pop));
+    }
+
+    #[test]
+    fn test_double_pairing() {
+        let mut seed = [0; 32];
+        seed[0] = 42;
+        let rng = &mut ChaCha20Rng::from_seed(seed);
+
+        let msg_1 = rng.next_u32().to_be_bytes();
+        let msg_2 = rng.next_u32().to_be_bytes();
+
+        let one = fr_one();
+        let p1 = sig_to_p1(&one.sign(&msg_1, &[], &[]));
+        let p2 = sig_to_p1(&one.sign(&msg_2, &[], &[]));
+
+        let sk = BlsSigningKey::generate(rng);
+        let vk = sk.to_blst_secret_key().sk_to_pk();
+        let p1_sk = sk.sign(&msg_1);
+
+        let rnd = BlsSigningKey::generate(rng);
+        let sigma_2 = rnd.to_blst_secret_key().sk_to_pk();
+
+        let p2_rnd = rnd.sign(&msg_2);
+
+        let sigma_1 = p1_add(&sig_to_p1(&p1_sk.0), &sig_to_p1(&p2_rnd.0));
+
+        // e(σ1,g2) = e(p1_1, vk) * e(p1_2, σ2)
+        assert!(verify_double_pairing(
+            &BlsVerificationKey(vk),
+            &p1_affine_to_sig(&sigma_1),
+            &BlsVerificationKey(sigma_2),
+            &p1_affine_to_sig(&p1),
+            &p1_affine_to_sig(&p2),
+        ));
     }
 }

@@ -42,7 +42,7 @@ impl Initializer {
         self.pk
     }
 
-    pub fn prepare_registration(self) -> Vec<BlsSignature> {
+    pub fn prepare_registration(&self) -> Vec<BlsSignature> {
         let index = Index::from_vk(&self.pk.vk);
 
         let mut index_signatures = Vec::with_capacity(Index::max());
@@ -50,7 +50,8 @@ impl Initializer {
         // We compute H_G1(i)^sk for i != index
         for i in 0..Index::max() {
             if index.to_usize() != i {
-                let signature = self.sk.sign(&i.to_be_bytes());
+                let augmented_index = Index::from_usize(i).augmented_index();
+                let signature = self.sk.sign(&augmented_index);
                 index_signatures.push(signature);
             } else {
                 // This index signature shall remain secret, we replace it with a random signature
@@ -145,7 +146,7 @@ mod tests {
     };
 
     use rand_chacha::ChaCha20Rng;
-    use rand_core::{SeedableRng};
+    use rand_core::SeedableRng;
 
     #[test]
     fn test_bytes() {
