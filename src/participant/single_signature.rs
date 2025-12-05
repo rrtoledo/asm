@@ -41,7 +41,6 @@ impl SingleSignature {
         // Verify signer's index is correct
         let index = Index::from_vk(pk);
         if index != self.signer_index {
-            println!(" wrong index");
             return Err(AsmSignatureError::SignatureIndexInvalid);
         }
 
@@ -53,7 +52,6 @@ impl SingleSignature {
             &index.hash_to_g1().0,
             &hash_msg(msg).0,
         ) {
-            println!(" wrong pairing");
             return Err(AsmSignatureError::SignatureInvalid);
         }
 
