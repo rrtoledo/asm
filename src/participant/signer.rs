@@ -42,6 +42,15 @@ impl Signer {
         if vk != vk_registered {
             return Err(RegisterError::UnregisteredInitializer);
         }
+        // Verifying ck
+        let sk_sig = sk.sign(&signer_index.augmented_index());
+        let avk_sig = ck.clone().add(&sk_sig);
+        if avk_sig
+            .verify(&signer_index.augmented_index(), &registry.aggregate_key.0)
+            .is_err()
+        {
+            return Err(RegisterError::InvalidMembershipKey);
+        };
 
         let registered = Some((signer_index, ck, registry.aggregate_key));
 

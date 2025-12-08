@@ -3,6 +3,7 @@ use digest::FixedOutput;
 use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 
+use crate::VerificationKey;
 use crate::bls_multi_signature::{
     BLS_SK_SIZE, BlsSignature, BlsSigningKey, BlsVerificationKeyProofOfPossession, VK_POP_SIZE,
 };
@@ -37,29 +38,34 @@ impl Initializer {
         INIT_SIZE
     }
 
+    /// Extract the verification key
+    pub fn get_vk(&self) -> VerificationKey {
+        self.pk.vk
+    }
+
     /// Extract the verification key with proof of possession.
     pub fn get_verification_key_proof_of_possession(&self) -> VerificationKeyProofOfPossession {
         self.pk
     }
 
-    pub fn prepare_registration(&self) -> Vec<BlsSignature> {
+    pub fn prepare_registration(&self, indices: &[Index]) -> Vec<(Index, BlsSignature)> {
         let index = Index::from_vk(&self.pk.vk);
-
-        let mut index_signatures = Vec::with_capacity(Index::max());
+        assert!(indices.contains(&index));
 
         // We compute H_G1(i)^sk for i != index
-        for i in 0..Index::max() {
-            if index.to_usize() != i {
-                let augmented_index = Index::from_usize(i).augmented_index();
-                let signature = self.sk.sign(&augmented_index);
-                index_signatures.push(signature);
-            } else {
-                // This index signature shall remain secret, we replace it with a random signature
-                index_signatures.push(BlsSignature(self.pk.pop.get_k1()));
-            }
-        }
-
-        index_signatures
+        indices
+            .iter()
+            .map(|&i| {
+                if index != i {
+                    let augmented_index = i.augmented_index();
+                    let signature = self.sk.sign(&augmented_index);
+                    (i, signature)
+                } else {
+                    // This index signature shall remain secret, we replace it with a random signature
+                    (i, BlsSignature(self.pk.pop.get_k1()))
+                }
+            })
+            .collect()
     }
 
     /// Create signer from a closed registration if initializer was properly registered.
@@ -68,13 +74,14 @@ impl Initializer {
         let mut index_found = false;
 
         for (i, rp, _cks) in &closed_reg.registered_parties {
-            if rp.pk == self.pk.vk && index == *i {
+            if rp.vk == self.pk.vk && index == *i {
                 index_found = true;
                 break;
             }
         }
 
         if !index_found {
+            println!("index not found issue in create signer");
             return Err(RegisterError::UnregisteredInitializer);
         }
 
@@ -92,7 +99,7 @@ impl Initializer {
         let mut is_registered = false;
 
         for rp in eligible_parties {
-            if rp.pk == self.pk.vk {
+            if rp.vk == self.pk.vk {
                 is_registered = true;
                 break;
             }

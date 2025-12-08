@@ -36,13 +36,20 @@
 //! for _ in 0..nparties {
 //!     // Create keys for this party
 //!     let p = Initializer::new(rng);
-//!     // Create signatures for membership keys
-//!     let mks = p.prepare_registration();
-//!     // Register keys with the KeyRegistration service
-//!     key_reg
-//!         .register(p.get_verification_key_proof_of_possession(), &mks)
-//!         .unwrap();
+//!     // Preregister the keys with the KeyRegistration service
+//!     key_reg.pre_register(p.get_verification_key_proof_of_possession());
 //!     ps.push(p);
+//! }
+//!
+//! // Close pre-registration and retrieve indices of pre-registered parties
+//! let indices = key_reg.close_preregistration();
+//!
+//! // Register keys with the KeyRegistration service
+//! for p in &ps {
+//!     // Create signatures for membership keys
+//!     let mks = p.prepare_registration(&indices);
+//!     // Register the party by sending the membership keys
+//!     key_reg.register(p.get_vk(), &mks);
 //! }
 //!
 //! // Close the key registration.

@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// Signer index
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Index {
     index: u8,
 }

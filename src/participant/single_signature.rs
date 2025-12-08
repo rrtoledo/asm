@@ -123,21 +123,32 @@ mod tests {
     ) -> (ClosedKeyRegistration, Vec<Signer>) {
         let mut key_reg = KeyRegistration::init();
 
+        // Create signers and pre-register them
         let mut inits = Vec::with_capacity(nb_signers);
         for _ in 0..nb_signers {
             let init = Initializer::new(rng);
-            let mks = init.prepare_registration();
-
-            let registered =
-                key_reg.register(init.get_verification_key_proof_of_possession(), &mks);
-            assert!(registered.is_ok());
+            let preregistered =
+                key_reg.pre_register(init.get_verification_key_proof_of_possession());
+            assert!(preregistered.is_ok());
             inits.push(init);
         }
 
+        // Close pre-registration
+        let indices: Vec<Index> = key_reg.close_preregistration();
+
+        // Sharing signatures on preregistered indices to register
+        for init in &inits {
+            let mks = init.prepare_registration(&indices);
+            let registered = key_reg.register(init.get_vk(), &mks);
+            assert!(registered.is_ok());
+        }
+
+        // Closing registration
         let is_closed = key_reg.close();
         assert!(is_closed.is_ok());
         let registry = is_closed.unwrap();
 
+        // Retrieving the membership keys to create signers
         let signers: Vec<Signer> = inits
             .iter()
             .map(|init| {

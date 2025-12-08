@@ -164,6 +164,14 @@ pub enum RegisterError {
     #[error("The verification of correctness of the supplied key is invalid.")]
     KeyInvalid(Box<BlsVerificationKeyProofOfPossession>),
 
+    /// The pre-registration is closed
+    #[error("The pre-registration is closed")]
+    ClosedPreRegistration,
+
+    /// The pre-registration is not closed
+    #[error("The pre-registration is not closed")]
+    OpenedPreRegistration,
+
     /// Serialization error
     #[error("Serialization error")]
     SerializationError,

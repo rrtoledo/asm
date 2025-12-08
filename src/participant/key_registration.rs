@@ -1,5 +1,6 @@
 //! Key registration functionality.
 use std::collections::{HashMap, hash_map::Entry};
+use std::default;
 
 use crate::bls_multi_signature::{BlsSignature, BlsVerificationKeyProofOfPossession};
 use crate::error::RegisterError;
@@ -9,8 +10,8 @@ use serde::{Deserialize, Serialize};
 /// Stores a registered party with its public key and the associated stake.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisteredParty {
-    pub pk: VerificationKey,
-    pub mks: Vec<BlsSignature>,
+    pub vk: VerificationKey,
+    pub mks: Option<Vec<(Index, BlsSignature)>>,
 }
 
 /// Struct that collects public keys and stakes of parties.
@@ -19,80 +20,137 @@ pub struct RegisteredParty {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KeyRegistration {
     keys: HashMap<Index, RegisteredParty>,
+    is_closed: bool,
 }
 
 impl KeyRegistration {
     /// Initialize an empty `KeyRegistration`.
     pub fn init() -> Self {
-        Self::default()
+        Self {
+            keys: HashMap::default(),
+            is_closed: false,
+        }
     }
 
     /// Verify and register a public key and stake for a particular party.
     /// # Error
     /// The function fails when the proof of possession is invalid or when the key is already registered.
-    pub fn register(
+    pub fn pre_register(
         &mut self,
         pk: BlsVerificationKeyProofOfPossession,
-        mks: &[BlsSignature],
     ) -> Result<(), RegisterError> {
-        if mks.len() != Index::max() as usize {
+        if !self.is_closed {
+            let index = Index::from_vk(&pk.vk);
+
+            if let Entry::Vacant(e) = self.keys.entry(index) {
+                pk.verify_proof_of_possesion()?;
+
+                e.insert(RegisteredParty {
+                    vk: pk.vk,
+                    mks: None,
+                });
+
+                return Ok(());
+            }
+            return Err(RegisterError::KeyRegistered(Box::new(pk.vk)));
+        }
+        Err(RegisterError::ClosedPreRegistration)
+    }
+
+    pub fn close_preregistration(&mut self) -> Vec<Index> {
+        self.is_closed = true;
+        let mut keys = self.keys.keys().cloned().collect::<Vec<Index>>();
+        keys.sort();
+        keys
+    }
+
+    pub fn register(
+        &mut self,
+        vk: VerificationKey,
+        mks: &[(Index, BlsSignature)],
+    ) -> Result<(), RegisterError> {
+        if !self.is_closed {
+            return Err(RegisterError::OpenedPreRegistration);
+        }
+
+        if mks.len() != self.keys.len() as usize {
             return Err(RegisterError::IncorrectNumberMembershipKey);
         }
 
-        let index = Index::from_vk(&pk.vk);
-
-        if let Entry::Vacant(e) = self.keys.entry(index) {
-            pk.verify_proof_of_possesion()?;
-
-            for (i, mk) in mks.iter().enumerate() {
-                let res = mk.verify(&Index::from_usize(i).augmented_index(), &pk.vk);
-                if i != index.to_usize() && res.is_err() {
-                    return Err(RegisterError::InvalidMembershipKey);
-                }
-                if i == index.to_usize() && res.is_ok() {
-                    return Err(RegisterError::AggregationSecretRevealed);
-                }
-            }
-
-            e.insert(RegisteredParty {
-                pk: pk.vk,
-                mks: mks.to_vec(),
-            });
-
-            return Ok(());
+        if !mks.iter().all(|(i, _sig)| self.keys.contains_key(i)) {
+            return Err(RegisterError::InvalidMembershipKey);
         }
-        Err(RegisterError::KeyRegistered(Box::new(pk.vk)))
+
+        let index = Index::from_vk(&vk);
+
+        if let Entry::Occupied(mut e) = self.keys.entry(index) {
+            let registered_party = e.get_mut();
+            if registered_party.vk == vk && registered_party.mks.is_none() {
+                for (i, mk) in mks {
+                    let res = mk.verify(&i.augmented_index(), &vk);
+                    if *i != index && res.is_err() {
+                        return Err(RegisterError::InvalidMembershipKey);
+                    }
+                    if *i == index && res.is_ok() {
+                        return Err(RegisterError::AggregationSecretRevealed);
+                    }
+                }
+
+                e.get_mut().mks = Some(mks.to_vec());
+
+                return Ok(());
+            }
+        }
+        Err(RegisterError::KeyRegistered(Box::new(vk)))
     }
 
     /// Finalize the key registration.
     /// This function disables `KeyReg::register`, consumes the instance of `self`, and returns a `ClosedKeyRegistration`.
     pub fn close(self) -> Result<ClosedKeyRegistration, RegisterError> {
         let mut avk: Option<AggregateVerificationKey> = None;
-        let mut cks: Vec<Option<BlsSignature>> = (0..Index::max()).map(|_| None).collect();
+        let mut cks = HashMap::<Index, BlsSignature>::default();
         let mut registered_parties = Vec::new();
 
+        // Filter the unregistered keys
+        let mut to_remove = Vec::new();
+
+        let filtered = self
+            .keys
+            .iter()
+            .filter_map(|(&i, r)| {
+                if r.mks.is_none() {
+                    to_remove.push(i);
+                    return None;
+                }
+                Some((i, r.clone()))
+            })
+            .collect::<Vec<(Index, RegisteredParty)>>();
+
         // Computing avk and the cks
-        for (&index, reg) in &self.keys {
+        for (index, reg) in &filtered {
             if avk.is_none() {
-                avk = Some(AggregateVerificationKey(reg.pk));
+                avk = Some(AggregateVerificationKey(reg.vk));
             } else {
-                avk = Some(AggregateVerificationKey(avk.unwrap().0.add(&reg.pk)));
+                avk = Some(AggregateVerificationKey(avk.unwrap().0.add(&reg.vk)));
             }
 
-            for i in 0..(Index::max() as usize) {
-                if i != index.to_usize() {
-                    if cks[i].is_none() {
-                        cks[i] = Some(reg.mks[i]);
+            let mks = reg.mks.clone().unwrap();
+            for (i, mk) in mks {
+                if i != *index && !to_remove.contains(&i) {
+                    if !cks.contains_key(&i) {
+                        cks.insert(i, mk);
                     } else {
-                        cks[i] = Some(BlsSignature::add(&cks[i].unwrap(), &reg.mks[i]));
+                        let new_ck = cks.get_mut(&i).unwrap().add(&mk);
+                        cks.insert(i, new_ck);
                     }
                 }
             }
         }
 
         // Collecting available parties
-        for (index, reg) in self.keys {
-            registered_parties.push((index, reg, cks[index.to_usize()].unwrap()));
+        for (index, reg) in filtered {
+            let ck = cks.get(&index).unwrap().clone();
+            registered_parties.push((index, reg, ck));
         }
 
         if avk.is_some() {
@@ -129,7 +187,7 @@ impl ClosedKeyRegistration {
     pub fn get_vk(&self, index: Index) -> Option<VerificationKey> {
         for (i, p, _ck) in &self.registered_parties {
             if index == *i {
-                return Some(p.pk);
+                return Some(p.vk);
             }
         }
         None
@@ -146,7 +204,7 @@ impl ClosedKeyRegistration {
     pub fn get_keys(&self, index: Index) -> Option<(VerificationKey, BlsSignature)> {
         for (i, p, ck) in &self.registered_parties {
             if index == *i {
-                return Some((p.pk, *ck));
+                return Some((p.vk, *ck));
             }
         }
         None
